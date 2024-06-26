@@ -37,7 +37,7 @@ from omni_drones.robots.drone import MultirotorBase
 class Crazyflie(MultirotorBase):
 
     # NOTE: there are unexpedted behaviors when using the asset from Isaac Sim
-    usd_path: str = ASSET_PATH + "/usd/cf2x_pybullet.usd"
+    usd_path: str = ASSET_PATH + "/usd/crazyflie.usd"
     # usd_path: str = ASSET_PATH + "/usd/cf2x_isaac.usd"
     param_path: str = ASSET_PATH + "/usd/crazyflie.yaml"
     DEFAULT_CONTROLLER = DSLPIDController
