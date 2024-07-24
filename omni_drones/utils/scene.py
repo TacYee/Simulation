@@ -26,12 +26,25 @@ from typing import Sequence, Union, Optional
 import omni.isaac.core.utils.prims as prim_utils
 import omni.isaac.core.utils.stage as stage_utils
 import omni.physx.scripts.utils as script_utils
+from omni.isaac.core import World
+from omni.isaac.core.objects import DynamicCuboid
+from omni_drones.utils.torch import euler_to_quaternion
 import torch
+import numpy as np
 
 from pxr import Gf, PhysxSchema, Usd, UsdGeom, UsdPhysics
-from scipy.spatial.transform.rotation import Rotation
 
 import omni_drones.utils.kit as kit_utils
+
+def rotate_position(position, angle_degrees):
+    angle_radians = np.radians(angle_degrees)
+    rotation_matrix = np.array([
+        [np.cos(angle_radians), -np.sin(angle_radians), 0],
+        [np.sin(angle_radians),  np.cos(angle_radians), 0],
+        [0, 0, 1]
+    ])
+    rotated_position = np.dot(rotation_matrix, position)
+    return rotated_position
 
 
 def design_scene():
@@ -42,17 +55,43 @@ def design_scene():
         restitution=0.8,
         improve_patch_friction=True,
     )
-    prim_utils.create_prim(
-        "/World/Light/GreySphere",
-        "SphereLight",
-        translation=(4.5, 3.5, 10.0),
-    )
-    # Lights-2
-    prim_utils.create_prim(
-        "/World/Light/WhiteSphere",
-        "SphereLight",
-        translation=(-4.5, 3.5, 10.0),
-    )
+    # prim_utils.create_prim(
+    #     "/World/Light/GreySphere",
+    #     "SphereLight",
+    #     translation=(4.5, 3.5, 10.0),
+    # )
+    # # Lights-2
+    # prim_utils.create_prim(
+    #     "/World/Light/WhiteSphere",
+    #     "SphereLight",
+    #     translation=(-4.5, 3.5, 10.0),
+    # )
+
+def create_wall():
+    world = World()
+    cubes = [
+            {"name": "fancy_cube1", "position": np.array([0, -2.1, 0]), "scale": np.array([4, 0.2, 2])},
+            {"name": "fancy_cube2", "position": np.array([-2.1, 0, 0]), "scale": np.array([0.2, 4, 2])},
+            {"name": "fancy_cube3", "position": np.array([2.1, 0, 0]), "scale": np.array([0.2, 4, 2])},
+            {"name": "fancy_cube4", "position": np.array([-1.3, 2.15, 0]), "scale": np.array([1.4, 0.3, 2])},
+            {"name": "fancy_cube5", "position": np.array([1.3, 2.15, 0]), "scale": np.array([1.4, 0.3, 2])}
+        ]
+    # 生成一个随机旋转角度（以度为单位）
+    random_angle = np.random.uniform(0, 360)
+    # 将随机角度转换为弧度，并生成对应的欧拉角张量
+    euler_angles = torch.tensor([0, 0, np.radians(random_angle)])  # 这里假设旋转轴是z轴
+    random_rotation = euler_to_quaternion(euler_angles).numpy()
+    
+    for cube in cubes:
+            rotated_position = rotate_position(cube['position'], random_angle)
+            world.scene.add(DynamicCuboid(
+                prim_path=f"/World/{cube['name']}",
+                name=cube['name'],
+                position=rotated_position,
+                scale=cube['scale'],
+                orientation=random_rotation,
+                color=np.array([0, 0, 1.0])
+            ))
 
 
 def create_rope(

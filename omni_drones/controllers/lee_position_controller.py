@@ -222,8 +222,9 @@ class AttitudeController(nn.Module):
         )
 
         self.mixer = nn.Parameter(compute_parameters(rotor_config, I))
+        #change p from 3 to 6
         self.gain_attitude = nn.Parameter(
-            torch.tensor([3., 3., 0.035]) @ I[:3, :3].inverse()
+            torch.tensor([6., 3., 0.035]) @ I[:3, :3].inverse()
         )
         self.gain_angular_rate = nn.Parameter(
             torch.tensor([0.52, 0.52, 0.025]) @ I[:3, :3].inverse()

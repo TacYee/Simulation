@@ -24,7 +24,7 @@ def main(cfg):
         backend="torch",
         device=cfg.sim.device,
     )
-    n = 1  # 设置无人机数量为1
+    n = 3  # 设置无人机数量为1
 
     drone_cls = MultirotorBase.REGISTRY[cfg.drone_model]
     drone = drone_cls()

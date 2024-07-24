@@ -9,7 +9,7 @@ from omni_drones import CONFIG_PATH, init_simulation_app
 from tensordict import TensorDict
 
 
-@hydra.main(version_base=None, config_path=CONFIG_PATH, config_name="config")
+@hydra.main(version_base=None, config_path=CONFIG_PATH, config_name="TransportHover")
 def main(cfg):
     OmegaConf.resolve(cfg)
     simulation_app = init_simulation_app(cfg)

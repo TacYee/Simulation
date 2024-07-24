@@ -2,7 +2,7 @@
 headless: false
 
 sim:
-  dt: 0.016
+  dt: 0.02
   substeps: 1
   gravity: [0, 0, -9.81]
   replicate_physics: false
@@ -11,7 +11,7 @@ sim:
   device: "cuda:0"
 
   solver_type: 1
-  use_gpu: False # set to False to run on CPU
+  use_gpu: True # set to False to run on CPU
   bounce_threshold_velocity: 0.2
   friction_offset_threshold: 0.04
   friction_correlation_distance: 0.025
@@ -36,4 +36,4 @@ viewer:
   lookat: [0., 0., 1.]
 
 drone_model: Hummingbird
-steps: 1000
+steps: 2000
