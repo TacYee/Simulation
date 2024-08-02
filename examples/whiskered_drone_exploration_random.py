@@ -23,6 +23,8 @@ def main(cfg):
     import typing
     from omni.isaac.range_sensor import _range_sensor
 
+    from omni_drones.utils.torch import quaternion_to_rotation_matrix
+
 
     sim = World(
         stage_units_in_meters=1.0,
@@ -47,8 +49,6 @@ def main(cfg):
     translations[:, 1] = torch.arange(n)
     translations[:, 2] = 1
     orientations = torch.zeros(n, 4, device = sim.device)
-    orientations[:, 0] = 0.9238795325  # w
-    orientations[:, 3] = 0.3826834324  # z
     drone.spawn(translations=translations,orientations=orientations)
 
     lidarInterface = _range_sensor.acquire_lidar_sensor_interface()
@@ -145,8 +145,14 @@ def main(cfg):
     yaw_rate_left_rad = np.deg2rad(15)
     yaw_rate_right = torch.tensor([yaw_rate_right_rad], device=sim.device)
     yaw_rate_left = torch.tensor([yaw_rate_left_rad], device=sim.device)
+    vel_backward = torch.tensor([-0.2, 0, 0], device=sim.device)
+    rot = 0
 
-    R = quaternion_to_rotation_matrix(rot)
+    random_direction = 0
+    random_direction_rad = 0
+    random_yaw = 0
+    special_action_counter = 0
+    direction_change_counter = 0
     
 
     # 创建位置控制器
@@ -193,27 +199,52 @@ def main(cfg):
         print("Noisy depth1:", depth1_noisy)
         print("Noisy depth2:", depth2_noisy)
 
-        if MAX_THRESHOLD > depth1_noisy  > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy> MIN_THRESHOLD:
-            action = controller(drone_state, target_vel=vel_side)
-            drone.apply_action(action)
-        elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy < MIN_THRESHOLD:
-            action = Att_controller(drone_state, target_yaw_rate=yaw_rate_right, target_thrust=(drone.MASS_0 * 10.76))
-            drone.apply_action(action)
-        elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy > MAX_THRESHOLD:
-            action = Att_controller(drone_state, target_yaw_rate=yaw_rate_left, target_thrust=(drone.MASS_0 * 10.76))
-            drone.apply_action(action)
-        elif depth1_noisy < MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
-            action = Att_controller(drone_state, target_yaw_rate=yaw_rate_left, target_thrust=(drone.MASS_0 * 10.76))
-            drone.apply_action(action)
-        elif depth1_noisy > MAX_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
-            action = Att_controller(drone_state, target_yaw_rate=yaw_rate_right,target_thrust=(drone.MASS_0 * 10.76))
-            drone.apply_action(action)
-        elif depth1_noisy > MAX_THRESHOLD and depth2_noisy > MAX_THRESHOLD :
-            action = controller(drone_state, target_vel=vel_forward)
-            drone.apply_action(action)
-        else :
-            action = controller(drone_state, target_vel=vel_backward)
-            drone.apply_action(action)
+        if special_action_counter>0:
+            action1 = controller(drone_state, target_vel=vel_backward)
+            drone.apply_action(action1)
+            special_action_counter -= 1
+        elif direction_change_counter > 0:
+            direction_change_counter -= 1
+            # 执行角度更改动作
+            action2 = Att_controller(drone_state, target_yaw_rate=random_yaw, target_thrust=(drone.MASS_0 * 10.76))
+            drone.apply_action(action2)
+
+        else:
+
+
+            if MAX_THRESHOLD > depth1_noisy  > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy> MIN_THRESHOLD:
+                special_action_counter = 100
+                direction_change_counter = 50
+                random_direction = np.random.uniform(-90, 0)
+                random_direction_rad = np.deg2rad(random_direction)
+                random_yaw = torch.tensor([random_direction_rad], device=sim.device)
+
+            elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy < MIN_THRESHOLD:
+                action = Att_controller(drone_state, target_yaw_rate=yaw_rate_right, target_thrust=(drone.MASS_0 * 10.76))
+                drone.apply_action(action)
+            elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy > MAX_THRESHOLD:
+                action = Att_controller(drone_state, target_yaw_rate=yaw_rate_left, target_thrust=(drone.MASS_0 * 10.76))
+                drone.apply_action(action)
+            elif depth1_noisy < MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
+                action = Att_controller(drone_state, target_yaw_rate=yaw_rate_left, target_thrust=(drone.MASS_0 * 10.76))
+                drone.apply_action(action)
+            elif depth1_noisy > MAX_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
+                action = Att_controller(drone_state, target_yaw_rate=yaw_rate_right,target_thrust=(drone.MASS_0 * 10.76))
+                drone.apply_action(action)
+            elif depth1_noisy > MAX_THRESHOLD and depth2_noisy > MAX_THRESHOLD :
+                _, rot, _, _ = torch.split(drone_state, [3, 4, 3, 3], dim=-1)
+                R = quaternion_to_rotation_matrix(rot)  # Convert quaternion to rotation matrix
+                R_transpose = R.transpose(0, 1)
+                forward_world = vel_forward @ R.transpose(-2, -1)
+                print(forward_world)
+                # 使用转换后的速度
+                action = controller(drone_state, target_vel=forward_world)
+                print(1)
+                drone.apply_action(action)
+
+            else :
+                action = controller(drone_state, target_vel=vel_backward)
+                drone.apply_action(action)
 
         sim.step(render=True)
 

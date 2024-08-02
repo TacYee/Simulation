@@ -141,8 +141,10 @@ def main(cfg):
     vel_side = torch.tensor([0, -0.2, 0.0], device=sim.device)
     vel_backward = torch.tensor([-0.2, 0.0, 0.0], device=sim.device)
     yaw = torch.tensor([0.0], device=sim.device)
-    yaw_rate_right = torch.tensor([-20.0], device=sim.device)
-    yaw_rate_left = torch.tensor([20.0], device=sim.device)
+    yaw_rate_right_rad = np.deg2rad(-30)
+    yaw_rate_left_rad = np.deg2rad(30)
+    yaw_rate_right = torch.tensor([yaw_rate_right_rad], device=sim.device)
+    yaw_rate_left = torch.tensor([yaw_rate_left_rad], device=sim.device)
     
 
     # 创建位置控制器

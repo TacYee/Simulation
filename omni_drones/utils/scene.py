@@ -27,7 +27,7 @@ import omni.isaac.core.utils.prims as prim_utils
 import omni.isaac.core.utils.stage as stage_utils
 import omni.physx.scripts.utils as script_utils
 from omni.isaac.core import World
-from omni.isaac.core.objects import DynamicCuboid
+from omni.isaac.core.objects import DynamicCuboid,DynamicCylinder
 from omni_drones.utils.torch import euler_to_quaternion
 import torch
 import numpy as np
@@ -91,6 +91,18 @@ def create_wall():
                 scale=cube['scale'],
                 orientation=random_rotation,
                 color=np.array([0, 0, 1.0])
+            ))
+
+def create_cyl():
+    world = World()
+    cylinder = {"name": "fancy_cylinder1", "position": np.array([2, 0, 0]), "scale": np.array([0.5, 0.5, 2])}
+    
+    world.scene.add(DynamicCylinder(
+                prim_path=f"/World/{cylinder['name']}",
+                name=cylinder['name'],
+                position=cylinder['position'],
+                scale=cylinder['scale'],
+                color=np.array([0, 0, 1.0]),
             ))
 
 
