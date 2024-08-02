@@ -34,7 +34,7 @@ def main(cfg):
     )
 
     scene_utils.design_scene()
-    scene_utils.create_wall()
+    scene_utils.create_cyl()
     
     n = 1  # 设置无人机数量为1
     MAX_THRESHOLD = 0.42

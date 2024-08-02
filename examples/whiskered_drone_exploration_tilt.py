@@ -37,8 +37,11 @@ def main(cfg):
     scene_utils.create_wall()
     
     n = 1  # 设置无人机数量为1
-    MAX_THRESHOLD = 0.42
-    MIN_THRESHOLD = 0.37
+    MAX_THRESHOLD1 = 0.43
+    MIN_THRESHOLD1 = 0.38
+
+    MAX_THRESHOLD2 = 0.38
+    MIN_THRESHOLD2 = 0.34
 
     drone_cls = MultirotorBase.REGISTRY[cfg.drone_model]
     drone = drone_cls()
@@ -189,30 +192,30 @@ def main(cfg):
         print("Noisy depth1:", depth1_noisy)
         print("Noisy depth2:", depth2_noisy)
 
-        if MAX_THRESHOLD > depth1_noisy  > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy> MIN_THRESHOLD:
+        if MAX_THRESHOLD1 > depth1_noisy  > MIN_THRESHOLD1 and MAX_THRESHOLD2 > depth2_noisy> MIN_THRESHOLD2:
             action = controller(drone_state, target_vel=vel_side)
             drone.apply_action(action)
-        elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy < MIN_THRESHOLD:
+        elif MAX_THRESHOLD1 > depth1_noisy > MIN_THRESHOLD1 and depth2_noisy < MIN_THRESHOLD2:
             action = Att_controller(drone_state, target_yaw_rate=yaw_rate_right, target_thrust=(drone.MASS_0 * 10.76))
             drone.apply_action(action)
             action = controller(drone_state, target_vel=vel_side)
             drone.apply_action(action)
-        elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy > MAX_THRESHOLD:
+        elif MAX_THRESHOLD1 > depth1_noisy > MIN_THRESHOLD1 and depth2_noisy > MAX_THRESHOLD2:
             action = Att_controller(drone_state, target_yaw_rate=yaw_rate_left, target_thrust=(drone.MASS_0 * 10.76))
             drone.apply_action(action)
             action = controller(drone_state, target_vel=vel_side)
             drone.apply_action(action)
-        elif depth1_noisy < MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
+        elif depth1_noisy < MIN_THRESHOLD1 and MAX_THRESHOLD2 > depth2_noisy > MIN_THRESHOLD2:
             action = Att_controller(drone_state, target_yaw_rate=yaw_rate_left, target_thrust=(drone.MASS_0 * 10.76))
             drone.apply_action(action)
             action = controller(drone_state, target_vel=vel_side)
             drone.apply_action(action)
-        elif depth1_noisy > MAX_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
+        elif depth1_noisy > MAX_THRESHOLD1 and MAX_THRESHOLD1 > depth2_noisy > MIN_THRESHOLD2:
             action = Att_controller(drone_state, target_yaw_rate=yaw_rate_right,target_thrust=(drone.MASS_0 * 10.76))
             drone.apply_action(action)
             action = controller(drone_state, target_vel=vel_side)
             drone.apply_action(action)
-        elif depth1_noisy > MAX_THRESHOLD and depth2_noisy > MAX_THRESHOLD :
+        elif depth1_noisy > MAX_THRESHOLD1 and depth2_noisy > MAX_THRESHOLD2 :
             action = controller(drone_state, target_vel=vel_forward)
             drone.apply_action(action)
         else :
