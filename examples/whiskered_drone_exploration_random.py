@@ -39,8 +39,8 @@ def main(cfg):
     scene_utils.create_wall()
     
     n = 1  # 设置无人机数量为1
-    MAX_THRESHOLD = 0.42
-    MIN_THRESHOLD = 0.37
+    MAX_THRESHOLD = 0.45
+    MIN_THRESHOLD = 0.40
 
     drone_cls = MultirotorBase.REGISTRY[cfg.drone_model]
     drone = drone_cls()
@@ -49,6 +49,8 @@ def main(cfg):
     translations[:, 1] = torch.arange(n)
     translations[:, 2] = 1
     orientations = torch.zeros(n, 4, device = sim.device)
+    orientations[:, 0] = 0.9238795325  # w
+    orientations[:, 3] = 0.3826834324  # z
     drone.spawn(translations=translations,orientations=orientations)
 
     lidarInterface = _range_sensor.acquire_lidar_sensor_interface()
@@ -59,7 +61,7 @@ def main(cfg):
             path=lidarPath1,
             parent = "/World",
             min_range=0.3,
-            max_range=0.45,
+            max_range=0.5,
             draw_points=False,
             draw_lines=True,
             horizontal_fov=1,
@@ -78,7 +80,7 @@ def main(cfg):
             path=lidarPath2,
             parent = "/World",
             min_range=0.3,
-            max_range=0.45,
+            max_range=0.5,
             draw_points=False,
             draw_lines=True,
             horizontal_fov=1,
@@ -153,6 +155,26 @@ def main(cfg):
     random_yaw = 0
     special_action_counter = 0
     direction_change_counter = 0
+
+    # Define the rotation quaternion for a -45 degree rotation around the Z-axis
+    theta = -45.0  # degrees
+    theta_rad = np.radians(theta)
+    cos_half_theta = np.cos(theta_rad / 2)
+    sin_half_theta = np.sin(theta_rad / 2)
+    rot_z_45 = torch.tensor([cos_half_theta, 0.0, 0.0, sin_half_theta], device=sim.device)
+
+
+
+    # Quaternion multiplication function
+    def quaternion_multiply(q, r):
+        w0, x0, y0, z0 = q.unbind(-1)
+        w1, x1, y1, z1 = r.unbind(-1)
+        return torch.stack([
+            w0*w1 - x0*x1 - y0*y1 - z0*z1,
+            w0*x1 + x0*w1 + y0*z1 - z0*y1,
+            w0*y1 - x0*z1 + y0*w1 + z0*x1,
+            w0*z1 + x0*y1 - y0*x1 + z0*w1
+        ], dim=-1)
     
 
     # 创建位置控制器
@@ -169,7 +191,7 @@ def main(cfg):
     drone_state = drone.get_state()[..., :13].squeeze(0)
 
     from tqdm import tqdm
-    for i in tqdm(range(2000)):
+    for i in tqdm(range(10000)):
         if sim.is_stopped():
             break
         if not sim.is_playing():
@@ -200,55 +222,114 @@ def main(cfg):
         print("Noisy depth2:", depth2_noisy)
 
         if special_action_counter>0:
-            action1 = controller(drone_state, target_vel=vel_backward)
+            # Split the drone_state tensor to get the rotation quaternion
+            _, rot, _, _ = torch.split(drone_state, [3, 4, 3, 3], dim=-1)
+
+            # Ensure the quaternion is normalized
+            rot = torch.nn.functional.normalize(rot, p=2, dim=-1)
+            rot = quaternion_multiply(rot, rot_z_45)
+
+            # Convert quaternion to rotation matrix
+            R = quaternion_to_rotation_matrix(rot)
+
+            # Transpose the rotation matrix
+            R_transpose = R.transpose(-1, -2)
+
+            # Reshape vel_forward to (1, 3) if necessary
+            if vel_backward.dim() == 1:
+                vel_backward = vel_backward.unsqueeze(0)
+
+            # Transform the velocity from body frame to world frame
+            backward_world = torch.matmul(vel_backward, R_transpose).squeeze(0)
+            action1 = controller(drone_state, target_vel=backward_world)
             drone.apply_action(action1)
             special_action_counter -= 1
+            print("fly backward and change orientation")
         elif direction_change_counter > 0:
             direction_change_counter -= 1
             # 执行角度更改动作
-            action2 = Att_controller(drone_state, target_yaw_rate=random_yaw, target_thrust=(drone.MASS_0 * 10.76))
+            action2 = Att_controller(drone_state, target_yaw_rate=random_yaw, target_thrust=(drone.MASS_0 * 10.6))
             drone.apply_action(action2)
-
+            print("fly backward and change orientation")
         else:
 
 
             if MAX_THRESHOLD > depth1_noisy  > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy> MIN_THRESHOLD:
                 special_action_counter = 100
                 direction_change_counter = 50
-                random_direction = np.random.uniform(-90, 0)
+                random_direction = -45
                 random_direction_rad = np.deg2rad(random_direction)
                 random_yaw = torch.tensor([random_direction_rad], device=sim.device)
+                print("fly backward and change orientation")
 
             elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy < MIN_THRESHOLD:
-                action = Att_controller(drone_state, target_yaw_rate=yaw_rate_right, target_thrust=(drone.MASS_0 * 10.76))
+                action = Att_controller(drone_state, target_yaw_rate=yaw_rate_right, target_thrust=(drone.MASS_0 * 10.6))
                 drone.apply_action(action)
+                print("turn right")
             elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy > MAX_THRESHOLD:
-                action = Att_controller(drone_state, target_yaw_rate=yaw_rate_left, target_thrust=(drone.MASS_0 * 10.76))
+                action = Att_controller(drone_state, target_yaw_rate=yaw_rate_left, target_thrust=(drone.MASS_0 * 10.6))
                 drone.apply_action(action)
+                print("turn left")
             elif depth1_noisy < MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
-                action = Att_controller(drone_state, target_yaw_rate=yaw_rate_left, target_thrust=(drone.MASS_0 * 10.76))
+                action = Att_controller(drone_state, target_yaw_rate=yaw_rate_left, target_thrust=(drone.MASS_0 * 10.6))
                 drone.apply_action(action)
+                print("turn left")
             elif depth1_noisy > MAX_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
-                action = Att_controller(drone_state, target_yaw_rate=yaw_rate_right,target_thrust=(drone.MASS_0 * 10.76))
+                action = Att_controller(drone_state, target_yaw_rate=yaw_rate_right,target_thrust=(drone.MASS_0 * 10.6))
                 drone.apply_action(action)
+                print("turn right")
             elif depth1_noisy > MAX_THRESHOLD and depth2_noisy > MAX_THRESHOLD :
+                # Split the drone_state tensor to get the rotation quaternion
                 _, rot, _, _ = torch.split(drone_state, [3, 4, 3, 3], dim=-1)
-                R = quaternion_to_rotation_matrix(rot)  # Convert quaternion to rotation matrix
-                R_transpose = R.transpose(0, 1)
-                forward_world = vel_forward @ R.transpose(-2, -1)
+
+                # Ensure the quaternion is normalized
+                rot = torch.nn.functional.normalize(rot, p=2, dim=-1)
+                rot = quaternion_multiply(rot, rot_z_45)
+
+                # Convert quaternion to rotation matrix
+                R = quaternion_to_rotation_matrix(rot)
+
+                # Transpose the rotation matrix
+                R_transpose = R.transpose(-1, -2)
+
+                # Reshape vel_forward to (1, 3) if necessary
+                if vel_forward.dim() == 1:
+                    vel_forward = vel_forward.unsqueeze(0)
+
+                # Transform the velocity from body frame to world frame
+                forward_world = torch.matmul(vel_forward, R_transpose).squeeze(0)
                 print(forward_world)
                 # 使用转换后的速度
                 action = controller(drone_state, target_vel=forward_world)
-                print(1)
+                print("fly forward")
                 drone.apply_action(action)
 
             else :
-                action = controller(drone_state, target_vel=vel_backward)
+                _, rot, _, _ = torch.split(drone_state, [3, 4, 3, 3], dim=-1)
+
+                # Ensure the quaternion is normalized
+                rot = torch.nn.functional.normalize(rot, p=2, dim=-1)
+                rot = quaternion_multiply(rot, rot_z_45)
+
+                # Convert quaternion to rotation matrix
+                R = quaternion_to_rotation_matrix(rot)
+
+                # Transpose the rotation matrix
+                R_transpose = R.transpose(-1, -2)
+
+                # Reshape vel_forward to (1, 3) if necessary
+                if vel_backward.dim() == 1:
+                    vel_backward = vel_backward.unsqueeze(0)
+
+                # Transform the velocity from body frame to world frame
+                backward_world = torch.matmul(vel_backward, R_transpose).squeeze(0)
+                action = controller(drone_state, target_vel=backward_world)
                 drone.apply_action(action)
+                print("fly backward")
 
         sim.step(render=True)
 
-        if i % 2000 == 0:
+        if i % 10000 == 0:
             reset()
         drone_state = drone.get_state()[..., :13].squeeze(0)
         print(drone_state)
