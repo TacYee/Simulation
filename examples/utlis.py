@@ -70,22 +70,22 @@ def control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, v
     
     if MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
         CF_world = transform_velocity(vel_side, R_transpose)
-        apply_control(drone, drone_state, controller, CF_world, "CF: fly side way")
+        apply_control(drone, drone_state, controller, CF_world, "fly side way")
         counter -= 1
     elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy < MIN_THRESHOLD:
-        perform_attitude_control(drone, drone_state, Att_controller, yaw_rate_right, drone.MASS_0 * 10.5, "CF: turn right")
+        perform_attitude_control(drone, drone_state, Att_controller, yaw_rate_right, drone.MASS_0 * 10.5, "turn right")
     elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy > MAX_THRESHOLD:
-        perform_attitude_control(drone, drone_state, Att_controller, yaw_rate_left, drone.MASS_0 * 10.5, "CF: turn left")
+        perform_attitude_control(drone, drone_state, Att_controller, yaw_rate_left, drone.MASS_0 * 10.5, "turn left")
     elif depth1_noisy < MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
-        perform_attitude_control(drone, drone_state, Att_controller, yaw_rate_left, drone.MASS_0 * 10.5, "CF: turn left")
+        perform_attitude_control(drone, drone_state, Att_controller, yaw_rate_left, drone.MASS_0 * 10.5, "turn left")
     elif depth1_noisy > MAX_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
-        perform_attitude_control(drone, drone_state, Att_controller, yaw_rate_right, drone.MASS_0 * 10.5, "CF: turn right")
+        perform_attitude_control(drone, drone_state, Att_controller, yaw_rate_right, drone.MASS_0 * 10.5, "turn right")
     elif depth1_noisy > MAX_THRESHOLD and depth2_noisy > MAX_THRESHOLD:
         forward_world = transform_velocity(vel_forward, R_transpose)
-        apply_control(drone, drone_state, controller, forward_world, "CF: fly forward")
+        apply_control(drone, drone_state, controller, forward_world, "fly forward")
     else:
         backward_world = transform_velocity(vel_backward, R_transpose)
-        apply_control(drone, drone_state, controller, backward_world, "CF: fly backward")
+        apply_control(drone, drone_state, controller, backward_world, "fly backward")
     
     return counter
 
