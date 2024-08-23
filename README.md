@@ -19,8 +19,11 @@ Welcome to join our [Discord](https://discord.gg/J4QvXR6tQj) for discussions and
 
 ## Notice
 
-The initial release of **OmniDrones** is developed based on Isaac Sim 2022.2.0. It can be found at the [release](https://github.com/btx0424/OmniDrones/tree/release) branch. The current version is developed based on Isaac Sim 2023.1.0. 
+The initial release of **OmniDrones** is developed based on Isaac Sim 2022.2.0. It can be found at the [release](https://github.com/btx0424/OmniDrones/tree/release) branch. The current version is developed based on Isaac Sim 2023.1.0.
 
+cd OmniDrones/ex
+export ISAACSIM_PATH="${HOME}/omni/lib/isaac_sim-2023.1.1"
+conda activate sim
 
 ## Citation
 
