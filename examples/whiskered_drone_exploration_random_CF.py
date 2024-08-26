@@ -43,7 +43,7 @@ def main(cfg):
     scene_utils.create_wall()
     
     n = 1  # 设置无人机数量为1
-    MAX_THRESHOLD = 0.45
+    MAX_THRESHOLD = 0.48
     MIN_THRESHOLD = 0.40
 
     drone_cls = MultirotorBase.REGISTRY[cfg.drone_model]
@@ -51,7 +51,7 @@ def main(cfg):
 
     translations = torch.zeros(n, 3, device = sim.device)
     translations[:, 1] = torch.arange(n)
-    translations[:, 2] = 0.3
+    translations[:, 2] = 0.2
     orientations = torch.zeros(n, 4, device = sim.device)
     orientations[:, 0] = 0.9238795325  # w
     orientations[:, 3] = 0.3826834324  # z
