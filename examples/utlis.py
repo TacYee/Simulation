@@ -1,5 +1,5 @@
 import torch
-
+import numpy as np
 def quaternion_multiply(q, r):
         w0, x0, y0, z0 = q.unbind(-1)
         w1, x1, y1, z1 = r.unbind(-1)
@@ -43,12 +43,21 @@ def quaternion_to_rotation_matrix(quaternion: torch.Tensor) -> torch.Tensor:
     matrix = matrix.unflatten(matrix.dim() - 1, (3, 3))
     return matrix
 
+def quaternion_to_yaw(rot):
+    w, x, y, z = rot[..., 0], rot[..., 1], rot[..., 2], rot[..., 3]
+    
+    # 计算 yaw
+    yaw = torch.atan2(2 * (w * z + x * y), 1 - 2 * (y**2 + z**2))
+    
+    return yaw
+
 def process_quaternion(drone_state, rot_z_45):
     _, rot, _, _ = torch.split(drone_state, [3, 4, 3, 3], dim=-1)
+    yaw = quaternion_to_yaw(rot)
     rot = torch.nn.functional.normalize(rot, p=2, dim=-1)
     rot = quaternion_multiply(rot, rot_z_45)
     R = quaternion_to_rotation_matrix(rot)
-    return R.transpose(-1, -2)
+    return R.transpose(-1, -2), yaw
 
 def transform_velocity(velocity, R_transpose):
     if velocity.dim() == 1:
@@ -60,26 +69,38 @@ def apply_control(drone, drone_state, controller, target_vel, action_name):
     drone.apply_action(action)
     print(f"{action_name}")
 
-def perform_attitude_control(drone, drone_state, Att_controller, yaw_rate, thrust, action_name):
-    action = Att_controller(drone_state, target_yaw_rate=yaw_rate, target_thrust=thrust)
+def perform_attitude_control(drone, drone_state, controller, yaw, action_name):
+    action = controller(drone_state, target_yaw=yaw)
     drone.apply_action(action)
     print(f"{action_name}")
 
-def control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, vel_backward, vel_side, rot_z_45, controller, Att_controller, yaw_rate_left, yaw_rate_right, MIN_THRESHOLD, MAX_THRESHOLD, counter= 0):
-    R_transpose = process_quaternion(drone_state, rot_z_45)
+def control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, vel_backward, vel_side, rot_z_45, controller, yaw_left, yaw_right, MIN_THRESHOLD, MAX_THRESHOLD, counter= 0):
+    R_transpose, current_yaw = process_quaternion(drone_state, rot_z_45)
     
     if MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
         CF_world = transform_velocity(vel_side, R_transpose)
         apply_control(drone, drone_state, controller, CF_world, "fly side way")
         counter -= 1
     elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy < MIN_THRESHOLD:
-        perform_attitude_control(drone, drone_state, Att_controller, yaw_rate_right, drone.MASS_0 * 10.5, "turn right")
+        target_yaw = current_yaw + yaw_right
+        perform_attitude_control(drone, drone_state, controller, target_yaw, "turn right")
+        print(torch.rad2deg(current_yaw))
+        print(torch.rad2deg(target_yaw))
     elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy > MAX_THRESHOLD:
-        perform_attitude_control(drone, drone_state, Att_controller, yaw_rate_left, drone.MASS_0 * 10.5, "turn left")
+        target_yaw = current_yaw + yaw_left
+        perform_attitude_control(drone, drone_state, controller, target_yaw, "turn left")
+        print(torch.rad2deg(current_yaw))
+        print(torch.rad2deg(target_yaw))
     elif depth1_noisy < MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
-        perform_attitude_control(drone, drone_state, Att_controller, yaw_rate_left, drone.MASS_0 * 10.5, "turn left")
+        target_yaw = current_yaw + yaw_left
+        perform_attitude_control(drone, drone_state, controller, target_yaw, "turn left")
+        print(torch.rad2deg(current_yaw))
+        print(torch.rad2deg(target_yaw))
     elif depth1_noisy > MAX_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
-        perform_attitude_control(drone, drone_state, Att_controller, yaw_rate_right, drone.MASS_0 * 10.5, "turn right")
+        target_yaw = current_yaw + yaw_right
+        perform_attitude_control(drone, drone_state, controller, target_yaw, "turn right")
+        print(torch.rad2deg(current_yaw))
+        print(torch.rad2deg(target_yaw))
     elif depth1_noisy > MAX_THRESHOLD and depth2_noisy > MAX_THRESHOLD:
         forward_world = transform_velocity(vel_forward, R_transpose)
         apply_control(drone, drone_state, controller, forward_world, "fly forward")
@@ -89,7 +110,4 @@ def control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, v
     
     return counter
 
-def residuals(depth1_noisy):
-    depth_last = depth_now
-    depth_now = depth1_noisy
-    print(f"CF: {action_name}")
+# def GPIS():

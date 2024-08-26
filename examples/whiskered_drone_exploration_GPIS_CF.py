@@ -43,15 +43,15 @@ def main(cfg):
     scene_utils.create_wall()
     
     n = 1  # 设置无人机数量为1
-    MAX_THRESHOLD = 0.45
-    MIN_THRESHOLD = 0.40
+    MAX_THRESHOLD = 0.8
+    MIN_THRESHOLD = 0.75
 
     drone_cls = MultirotorBase.REGISTRY[cfg.drone_model]
     drone = drone_cls()
 
     translations = torch.zeros(n, 3, device = sim.device)
     translations[:, 1] = torch.arange(n)
-    translations[:, 2] = 0.3
+    translations[:, 2] = 1
     orientations = torch.zeros(n, 4, device = sim.device)
     orientations[:, 0] = 0.9238795325  # w
     orientations[:, 3] = 0.3826834324  # z
@@ -64,8 +64,8 @@ def main(cfg):
             "RangeSensorCreateLidar",
             path=lidarPath1,
             parent = "/World",
-            min_range=0.1,
-            max_range=0.7,
+            min_range=0.4,
+            max_range=1,
             draw_points=False,
             draw_lines=True,
             horizontal_fov=1,
@@ -83,8 +83,8 @@ def main(cfg):
             "RangeSensorCreateLidar",
             path=lidarPath2,
             parent = "/World",
-            min_range=0.1,
-            max_range=0.7,
+            min_range=0.4,
+            max_range=1,
             draw_points=False,
             draw_lines=True,
             horizontal_fov=1,
@@ -147,16 +147,16 @@ def main(cfg):
     vel_side = torch.tensor([0, -0.2, 0.0], device=sim.device)
     vel_backward = torch.tensor([-0.2, 0.0, 0.0], device=sim.device)
     yaw = torch.tensor([0.0], device=sim.device)
-    yaw_rate_right_rad = np.deg2rad(-15)
-    yaw_rate_left_rad = np.deg2rad(15)
-    yaw_rate_right = torch.tensor([yaw_rate_right_rad], device=sim.device)
-    yaw_rate_left = torch.tensor([yaw_rate_left_rad], device=sim.device)
+    yaw_right_rad = np.deg2rad(-45)
+    yaw_left_rad = np.deg2rad(45)
+    yaw_right = torch.tensor([yaw_right_rad], device=sim.device)
+    yaw_left = torch.tensor([yaw_left_rad], device=sim.device)
     vel_backward = torch.tensor([-0.2, 0, 0], device=sim.device)
     cf_vel_backward = torch.tensor([-0.05, 0, 0], device=sim.device)
     cf_vel_forward = torch.tensor([0.05, 0, 0], device=sim.device)
     rot = 0
-    depth_now = 0.8
-    depth_last = 0.8
+    depth_now = 1
+    depth_last = 1
 
     random_direction = 0
     random_direction_rad = 0
@@ -177,7 +177,7 @@ def main(cfg):
 
     # 创建位置控制器
     controller = LeePositionController(g=9.81, uav_params=drone.params).to(sim.device)
-    Att_controller = AttitudeController(g=9.81, uav_params=drone.params).to(sim.device)
+    # Att_controller = AttitudeController(g=9.81, uav_params=drone.params).to(sim.device)
 
     def reset():
         drone._reset_idx(torch.tensor([0]))
@@ -205,7 +205,7 @@ def main(cfg):
 
         # 定义高斯噪声的均值和标准差
         mean = 0.0
-        std_dev = 0.005
+        std_dev = 0.00
 
         # 为深度数据生成高斯噪声
         noise1 = np.random.normal(mean, std_dev, depth1.shape)
@@ -219,36 +219,42 @@ def main(cfg):
         print("Noisy depth1:", depth1_noisy)
         print("Noisy depth2:", depth2_noisy)
 
+
         if goal_counter > 0:
-            R_transpose = process_quaternion(drone_state, rot_z_45)
+            R_transpose, _ = process_quaternion(drone_state, rot_z_45)
             goal_world = transform_velocity(vel_side, R_transpose)
             apply_control(drone, drone_state, controller, goal_world, "Find the goal")
             goal_counter -= 1
         elif CF_action_counter > 0:
-            CF_action_counter = control_drone(drone, drone_state, depth1_noisy, depth2_noisy, cf_vel_forward, cf_vel_backward, vel_side, rot_z_45, controller, Att_controller, yaw_rate_left, yaw_rate_right, MIN_THRESHOLD, MAX_THRESHOLD, CF_action_counter)
+            CF_action_counter = control_drone(drone, drone_state, depth1_noisy, depth2_noisy, cf_vel_forward, cf_vel_backward, 
+                                              vel_side, rot_z_45, controller, yaw_left, yaw_right, 
+                                              MIN_THRESHOLD, MAX_THRESHOLD, CF_action_counter)
             depth_last = depth_now
-            depth_now = depth1_noisy
+            depth_now = depth2_noisy
             residuals = depth_now - depth_last
-            if residuals > 0.08:
+            if residuals > 0.05:
                 goal_counter = 100
         elif backward_action_counter > 0:
-            R_transpose = process_quaternion(drone_state, rot_z_45)
+            R_transpose, current_yaw = process_quaternion(drone_state, rot_z_45)
+            target_yaw = current_yaw + random_yaw
             backward_world = transform_velocity(vel_backward, R_transpose)
             apply_control(drone, drone_state, controller, backward_world, "fly backward")
             backward_action_counter -= 1
         elif direction_change_counter > 0:
-            perform_attitude_control(drone, drone_state, Att_controller, random_yaw, drone.MASS_0 * 10.5, "change orientation")
+            perform_attitude_control(drone, drone_state, controller, target_yaw, "change orientation")
             direction_change_counter -= 1
         else:
             if MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
                 CF_action_counter = 150
-                backward_action_counter = 150
-                direction_change_counter = 50
+                backward_action_counter = 250
+                direction_change_counter = 90
                 random_direction_rad = np.deg2rad(-45)
                 random_yaw = torch.tensor([random_direction_rad], device=sim.device)
                 print("CF start")
             else:
-                control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, vel_backward, vel_side, rot_z_45, controller, Att_controller, yaw_rate_left, yaw_rate_right,  MIN_THRESHOLD, MAX_THRESHOLD)
+                control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, 
+                              vel_backward, vel_side, rot_z_45, controller, 
+                              yaw_left, yaw_right,  MIN_THRESHOLD, MAX_THRESHOLD)
 
         sim.step(render=True)
 

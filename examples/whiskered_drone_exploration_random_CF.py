@@ -223,9 +223,10 @@ def main(cfg):
             R_transpose = process_quaternion(drone_state, rot_z_45)
             goal_world = transform_velocity(vel_side, R_transpose)
             apply_control(drone, drone_state, controller, goal_world, "Find the goal")
+            CF_action_counter = 0
             goal_counter -= 1
         elif CF_action_counter > 0:
-            CF_action_counter = control_drone(drone, drone_state, depth1_noisy, depth2_noisy, cf_vel_forward, cf_vel_backward, vel_side, rot_z_45, controller, Att_controller, yaw_rate_left, yaw_rate_right, MIN_THRESHOLD, MAX_THRESHOLD, CF_action_counter)
+            CF_action_counter = control_drone(drone, drone_state, depth1_noisy, depth2_noisy, cf_vel_forward, cf_vel_backward, vel_side, rot_z_45, controller, yaw_rate_left, yaw_rate_right, MIN_THRESHOLD, MAX_THRESHOLD, CF_action_counter)
             print("CF")
             depth_last = depth_now
             depth_now = depth2_noisy
@@ -250,9 +251,9 @@ def main(cfg):
                 print("CF start")
             else:
                 if depth1_noisy < 0.65 or depth2_noisy < 0.65:
-                    control_drone(drone, drone_state, depth1_noisy, depth2_noisy, cf_vel_forward, cf_vel_backward, vel_side, rot_z_45, controller, Att_controller, yaw_rate_left, yaw_rate_right,  MIN_THRESHOLD, MAX_THRESHOLD)
+                    control_drone(drone, drone_state, depth1_noisy, depth2_noisy, cf_vel_forward, cf_vel_backward, vel_side, rot_z_45, controller, yaw_rate_left, yaw_rate_right,  MIN_THRESHOLD, MAX_THRESHOLD)
                 else: 
-                    control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, vel_backward, vel_side, rot_z_45, controller, Att_controller, yaw_rate_left, yaw_rate_right,  MIN_THRESHOLD, MAX_THRESHOLD)
+                    control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, vel_backward, vel_side, rot_z_45, controller, yaw_rate_left, yaw_rate_right,  MIN_THRESHOLD, MAX_THRESHOLD)
         sim.step(render=True)
 
         if i % 10000 == 0:

@@ -32,7 +32,7 @@ sim:
 
 viewer:
   resolution: [960, 720]
-  eye: [2., 2., 2.]
+  eye: [0., 0., 2.]
   lookat: [0., 0., 1.]
 
 drone_model: Hummingbird
