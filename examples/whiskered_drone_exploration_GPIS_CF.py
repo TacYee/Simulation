@@ -229,15 +229,6 @@ def main(cfg):
         # 将噪声添加到深度数据中
         depth1_noisy = depth1 + noise1
         depth2_noisy = depth2 + noise2
-        if depth1_noisy < 0.48:
-            laser_value1 = 1
-        else:
-            laser_value1 = 0
-        
-        if depth2_noisy < 0.48:
-            laser_value2 = 1
-        else:
-            laser_value2 = 0
 
         # 打印添加噪声后的深度数据
         print("Noisy depth1:", depth1_noisy)
@@ -259,6 +250,10 @@ def main(cfg):
             residuals = depth_now - depth_last
             if residuals > 0.05:
                 goal_counter = 100
+            if depth1_noisy < 0.48:
+                laser_value1 = 1
+            if depth2_noisy < 0.48:
+                laser_value2 = 1
         elif backward_action_counter > 0:
             R_transpose, _ = process_quaternion(drone_state, rot_z_45)
             backward_world = transform_velocity(vel_backward, R_transpose)
@@ -275,6 +270,8 @@ def main(cfg):
                 direction_change_counter = 0
             print(torch.rad2deg(current_yaw))
             print(torch.rad2deg(target_yaw))
+            laser_value1 = -1
+            laser_value2 = -1 
         else:
             if MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
                 CF_action_counter = 150
@@ -294,16 +291,18 @@ def main(cfg):
             reset()
         drone_state = drone.get_state()[..., :13].squeeze(0)
         print(drone_state)
-        state_x = drone.get_state()[..., 0].squeeze(0).cpu().numpy()
-        state_y = drone.get_state()[..., 1].squeeze(0).cpu().numpy()
+        state_x = drone.get_state()[..., 0].item()
+        state_y = drone.get_state()[..., 1].item()
         state_xs.append(state_x)
         state_ys.append(state_y) 
         _ , state_yaw = process_quaternion(drone_state, rot_z_45)
-        state_yaws.append(state_yaw.squeeze(0).cpu().numpy())
-        state_lasers1.append(depth1_noisy) 
-        state_lasers2.append(depth2_noisy)
+        state_yaws.append(state_yaw.item())
+        state_lasers1.append(depth1_noisy.item()) 
+        state_lasers2.append(depth2_noisy.item())
         laser_values1.append(laser_value1)
         laser_values2.append(laser_value2)
+        laser_value1 = 0
+        laser_value2 = 0 
 
     data = {
     'state_xs': state_xs,
