@@ -204,7 +204,7 @@ def main(cfg):
     drone_state = drone.get_state()[..., :13].squeeze(0)
 
     from tqdm import tqdm
-    for i in tqdm(range(4000)):
+    for i in tqdm(range(5000)):
         if sim.is_stopped():
             break
         if not sim.is_playing():
@@ -233,78 +233,83 @@ def main(cfg):
         # 打印添加噪声后的深度数据
         print("Noisy depth1:", depth1_noisy)
         print("Noisy depth2:", depth2_noisy)
+        start_counter = 4
 
-
-        if goal_counter > 0:
-            R_transpose, _ = process_quaternion(drone_state, rot_z_45)
-            goal_world = transform_velocity(vel_side, R_transpose)
-            apply_control(drone, drone_state, controller, goal_world, "Find the goal")
-            CF_action_counter = 0
-            goal_counter -= 1
-        elif CF_action_counter > 0:
-            CF_action_counter = control_drone(drone, drone_state, depth1_noisy, depth2_noisy, cf_vel_forward, cf_vel_backward, 
-                                              vel_side, rot_z_45, controller, yaw_left, yaw_right, 
-                                              MIN_THRESHOLD, MAX_THRESHOLD, CF_action_counter)
-            depth_last = depth_now
-            depth_now = depth2_noisy
-            residuals = depth_now - depth_last
-            if residuals > 0.05:
-                goal_counter = 100
-            if depth1_noisy < 0.48:
-                laser_value1 = 1
-            if depth2_noisy < 0.48:
-                laser_value2 = 1
-        elif backward_action_counter > 0:
-            R_transpose, _ = process_quaternion(drone_state, rot_z_45)
-            backward_world = transform_velocity(vel_backward, R_transpose)
-            apply_control(drone, drone_state, controller, backward_world, "fly backward")
-            backward_action_counter -= 1
-            if backward_action_counter == 0:
-                _, before_yaw = process_quaternion(drone_state, rot_z_45)
-        elif direction_change_counter > 0:
-            target_yaw = before_yaw + random_yaw
-            _, current_yaw = process_quaternion(drone_state, rot_z_45)
-            perform_attitude_control(drone, drone_state, controller, target_yaw, "change orientation")
-            direction_change_counter -= 1
-            if torch.abs(torch.rad2deg(current_yaw) - torch.rad2deg(target_yaw)) < 0.2:
-                direction_change_counter = 0
-            print(torch.rad2deg(current_yaw))
-            print(torch.rad2deg(target_yaw))
-            if depth1_noisy > 0.48:
-                laser_value1 = -1
-            if depth2_noisy > 0.48:
-                laser_value2 = -1
-        else:
-            if MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
-                CF_action_counter = 150
-                backward_action_counter = 250
-                direction_change_counter = 200
-                random_direction_rad = np.deg2rad(-90)
-                random_yaw = torch.tensor([random_direction_rad], device=sim.device)
-                print("CF start")
+        while start_counter > 0:
+            if goal_counter > 0:
+                R_transpose, _ = process_quaternion(drone_state, rot_z_45)
+                goal_world = transform_velocity(vel_side, R_transpose)
+                apply_control(drone, drone_state, controller, goal_world, "Find the goal")
+                CF_action_counter = 0
+                goal_counter -= 1
+            elif CF_action_counter > 0:
+                CF_action_counter = control_drone(drone, drone_state, depth1_noisy, depth2_noisy, cf_vel_forward, cf_vel_backward, 
+                                                vel_side, rot_z_45, controller, yaw_left, yaw_right, 
+                                                MIN_THRESHOLD, MAX_THRESHOLD, CF_action_counter)
+                depth_last = depth_now
+                depth_now = depth2_noisy
+                residuals = depth_now - depth_last
+                if residuals > 0.05:
+                    goal_counter = 100
+                if depth1_noisy < 0.48:
+                    laser_value1 = 1
+                if depth2_noisy < 0.48:
+                    laser_value2 = 1
+            elif backward_action_counter > 0:
+                R_transpose, _ = process_quaternion(drone_state, rot_z_45)
+                backward_world = transform_velocity(vel_backward, R_transpose)
+                apply_control(drone, drone_state, controller, backward_world, "fly backward")
+                backward_action_counter -= 1
+                if backward_action_counter == 0:
+                    _, before_yaw = process_quaternion(drone_state, rot_z_45)
+            elif direction_change_counter > 0:
+                target_yaw = before_yaw + random_yaw
+                _, current_yaw = process_quaternion(drone_state, rot_z_45)
+                perform_attitude_control(drone, drone_state, controller, target_yaw, "change orientation")
+                direction_change_counter -= 1
+                if torch.abs(torch.rad2deg(current_yaw) - torch.rad2deg(target_yaw)) < 0.2:
+                    direction_change_counter = 0
+                print(torch.rad2deg(current_yaw))
+                print(torch.rad2deg(target_yaw))
+                if depth1_noisy > 0.48:
+                    laser_value1 = -1
+                if depth2_noisy > 0.48:
+                    laser_value2 = -1
             else:
-                control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, 
-                              vel_backward, vel_side, rot_z_45, controller, 
-                              yaw_left, yaw_right,  MIN_THRESHOLD, MAX_THRESHOLD)
+                if MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
+                    CF_action_counter = 150
+                    backward_action_counter = 250
+                    direction_change_counter = 200
+                    random_direction_rad = np.deg2rad(-90)
+                    start_counter -= 1
+                    random_yaw = torch.tensor([random_direction_rad], device=sim.device)
+                    print("CF start")
+                else:
+                    control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, 
+                                vel_backward, vel_side, rot_z_45, controller, 
+                                yaw_left, yaw_right,  MIN_THRESHOLD, MAX_THRESHOLD)
 
-        sim.step(render=True)
+            sim.step(render=True)
 
-        if i % 4000 == 0:
-            reset()
-        drone_state = drone.get_state()[..., :13].squeeze(0)
-        print(drone_state)
-        state_x = drone.get_state()[..., 0].item()
-        state_y = drone.get_state()[..., 1].item()
-        state_xs.append(state_x)
-        state_ys.append(state_y) 
-        _ , state_yaw = process_quaternion(drone_state, rot_z_45)
-        state_yaws.append(state_yaw.item())
-        state_lasers1.append(depth1_noisy.item()) 
-        state_lasers2.append(depth2_noisy.item())
-        laser_values1.append(laser_value1)
-        laser_values2.append(laser_value2)
-        laser_value1 = 0
-        laser_value2 = 0 
+            if i % 5000 == 0:
+                reset()
+            drone_state = drone.get_state()[..., :13].squeeze(0)
+            print(drone_state)
+            state_x = drone.get_state()[..., 0].item()
+            state_y = drone.get_state()[..., 1].item()
+            state_xs.append(state_x)
+            state_ys.append(state_y) 
+            _ , state_yaw = process_quaternion(drone_state, rot_z_45)
+            state_yaws.append(state_yaw.item())
+            state_lasers1.append(depth1_noisy.item()) 
+            state_lasers2.append(depth2_noisy.item())
+            laser_values1.append(laser_value1)
+            laser_values2.append(laser_value2)
+            laser_value1 = 0
+            laser_value2 = 0 
+        
+        while start_counter == 0:
+            
 
     data = {
     'state_xs': state_xs,
@@ -320,7 +325,7 @@ def main(cfg):
     df = pd.DataFrame(data)
 
     # 保存为CSV文件
-    df.to_csv('drone_states.csv', index=False)
+    df.to_csv('drone_states2.csv', index=False)
     simulation_app.close()
 
 if __name__ == "__main__":

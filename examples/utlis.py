@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from scipy.spatial import ConvexHull
 def quaternion_multiply(q, r):
         w0, x0, y0, z0 = q.unbind(-1)
         w1, x1, y1, z1 = r.unbind(-1)
@@ -110,4 +111,38 @@ def control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, v
     
     return counter
 
-# def GPIS():
+def compute_angle(p1, p2, p3):
+    """计算三个点形成的角度，返回弧度值"""
+    v1 = p2 - p1
+    v2 = p3 - p2
+    cosine_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
+    angle = np.arccos(np.clip(cosine_angle, -1.0, 1.0))
+    return angle
+
+def find_high_curvature_points(points, angle_threshold_degrees=10):
+    """找出曲率大于指定角度的点"""
+    # 计算凸包
+    hull = ConvexHull(points)
+    hull_points = points[hull.vertices]
+    
+    # 转换角度阈值为弧度
+    angle_threshold_radians = np.deg2rad(angle_threshold_degrees)
+    
+    # 计算每个点的曲率（角度）并筛选出曲率大于阈值的点
+    high_curvature_points = []
+    for i in range(len(hull_points)):
+        p1 = hull_points[i - 1]
+        p2 = hull_points[i]
+        p3 = hull_points[(i + 1) % len(hull_points)]
+        
+        angle = compute_angle(p1, p2, p3)
+        if angle > angle_threshold_radians:
+            high_curvature_points.append(p2)
+    
+    return hull_points, np.array(high_curvature_points)
+
+def potential_function(x, significant_points, c=1.0):
+    """计算势函数值"""
+    distances = np.linalg.norm(x[:, np.newaxis, :] - significant_points[np.newaxis, :, :], axis=2)
+    P = -np.exp(-distances**2 / (2 * c**2))
+    return np.min(P, axis=1)
