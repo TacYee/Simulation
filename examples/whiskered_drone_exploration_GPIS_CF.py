@@ -270,8 +270,10 @@ def main(cfg):
                 direction_change_counter = 0
             print(torch.rad2deg(current_yaw))
             print(torch.rad2deg(target_yaw))
-            laser_value1 = -1
-            laser_value2 = -1 
+            if depth1_noisy > 0.48:
+                laser_value1 = -1
+            if depth2_noisy > 0.48:
+                laser_value2 = -1
         else:
             if MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
                 CF_action_counter = 150
