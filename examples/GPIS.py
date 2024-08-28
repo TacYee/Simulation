@@ -112,6 +112,7 @@ class GPISModel:
     def find_max_uncertainty_point(self):
         max_uncertainty_index = np.argmax(self.penalized_uncertainty_grid)
         self.max_uncertainty_point = self.contour_points[max_uncertainty_index]
+        return self.max_uncertainty_point
     
     def plot_results(self, filename=None):
         x = np.linspace(-3, 3, 20)

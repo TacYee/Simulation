@@ -6,6 +6,7 @@ from omni_drones import CONFIG_PATH, init_simulation_app
 import omni
 import numpy as np
 from utlis import *
+from GPIS import GPISModel
 
 @hydra.main(version_base=None, config_path=".", config_name="demo")
 def main(cfg):
@@ -309,6 +310,14 @@ def main(cfg):
             laser_value2 = 0 
         
         while start_counter == 0:
+            gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1, laser_value1)
+            gpis.sample_data()
+            gpis.train_model()
+            gpis.predict()
+            gpis.apply_penalty()
+            next_point = gpis.find_max_uncertainty_point()
+            gpis.plot_results(filename='gpis_results.png')
+        break
             
 
     data = {
