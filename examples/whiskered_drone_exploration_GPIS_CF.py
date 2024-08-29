@@ -208,7 +208,7 @@ def main(cfg):
     drone_state = drone.get_state()[..., :13].squeeze(0)
 
     from tqdm import tqdm
-    for i in tqdm(range(6000)):
+    for i in tqdm(range(8000)):
         if sim.is_stopped():
             break
         if not sim.is_playing():
@@ -283,11 +283,11 @@ def main(cfg):
                 gpis.train_model()
                 gpis.predict()
                 next_point = gpis.find_max_uncertainty_point()
-                target_yaw = torch.tensor([np.arctan2(next_point[1] - state_y, next_point[0] - state_x)], device=sim.device)
-                direction_change_counter = 300
+                target_yaw = torch.tensor([np.arctan2(next_point[1] - state_y, next_point[0] - state_x)], device=sim.device) + 0.7853981
+                direction_change_counter = 500
                 gpis.plot_results(filename='gpis_results.png')
                 finish_CF = False
-            print(torch.rad2deg(current_yaw))
+            print(torch.rad2deg(current_yaw + 0.7853981))
             print(torch.rad2deg(target_yaw))
 
         else:
