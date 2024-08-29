@@ -146,3 +146,8 @@ def potential_function(x, significant_points, c=1.0):
     distances = np.linalg.norm(x[:, np.newaxis, :] - significant_points[np.newaxis, :, :], axis=2)
     P = -np.exp(-distances**2 / (2 * c**2))
     return np.min(P, axis=1)
+
+def normalize_angle(rad):
+    """ 将角度归一化到 -π 到 π 范围 """
+    rad = (rad + np.pi) % (2 * np.pi) - np.pi
+    return torch.rad2deg(rad)
