@@ -190,6 +190,7 @@ def main(cfg):
     laser_values1 = []
     laser_values2 = []
     direction_changes_completed = 0
+    finish_CF = False
 
     
 
@@ -207,7 +208,7 @@ def main(cfg):
     drone_state = drone.get_state()[..., :13].squeeze(0)
 
     from tqdm import tqdm
-    for i in tqdm(range(5000)):
+    for i in tqdm(range(6000)):
         if sim.is_stopped():
             break
         if not sim.is_playing():
@@ -255,6 +256,7 @@ def main(cfg):
                 laser_value1 = 1
             if depth2_noisy < 0.48:
                 laser_value2 = 1
+            finish_CF = True
         elif backward_action_counter > 0:
             R_transpose, _ = process_quaternion(drone_state, rot_z_45)
             backward_world = transform_velocity(vel_backward, R_transpose)
@@ -262,20 +264,32 @@ def main(cfg):
             backward_action_counter -= 1
             if backward_action_counter == 0:
                 _, before_yaw = process_quaternion(drone_state, rot_z_45)
-        elif direction_change_counter > 0:
             target_yaw = before_yaw + random_yaw
+        elif direction_change_counter > 0:
             _, current_yaw = process_quaternion(drone_state, rot_z_45)
             perform_attitude_control(drone, drone_state, controller, target_yaw, "change orientation")
             direction_change_counter -= 1
             if torch.abs(normalize_angle(current_yaw) - normalize_angle(target_yaw)) < 0.2:
                 direction_change_counter = 0
                 direction_changes_completed += 1
-            print(torch.rad2deg(current_yaw))
-            print(torch.rad2deg(target_yaw))
+
             if depth1_noisy > 0.48:
                 laser_value1 = -1
             if depth2_noisy > 0.48:
                 laser_value2 = -1
+            if direction_changes_completed >= 4 and finish_CF:
+                gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1, laser_values1)
+                gpis.sample_data()
+                gpis.train_model()
+                gpis.predict()
+                next_point = gpis.find_max_uncertainty_point()
+                target_yaw = torch.tensor([np.arctan2(next_point[1] - state_y, next_point[0] - state_x)], device=sim.device)
+                direction_change_counter = 300
+                gpis.plot_results(filename='gpis_results.png')
+                finish_CF = False
+            print(torch.rad2deg(current_yaw))
+            print(torch.rad2deg(target_yaw))
+
         else:
             if MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
                 CF_action_counter = 150
@@ -288,15 +302,6 @@ def main(cfg):
                 control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, 
                             vel_backward, vel_side, rot_z_45, controller, 
                             yaw_left, yaw_right,  MIN_THRESHOLD, MAX_THRESHOLD)
-                
-        if direction_changes_completed == 4:
-            gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1, laser_values1)
-            gpis.sample_data()
-            gpis.train_model()
-            gpis.predict()
-            next_point = gpis.find_max_uncertainty_point()
-            gpis.plot_results(filename='gpis_results.png')
-            simulation_app.close()
 
         sim.step(render=True)
         drone_state = drone.get_state()[..., :13].squeeze(0)
@@ -314,7 +319,8 @@ def main(cfg):
         laser_values2.append(laser_value2)
         laser_value1 = 0
         laser_value2 = 0 
-        
+    
+    simulation_app.close()
             
 
     # data = {

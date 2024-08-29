@@ -7,7 +7,7 @@ import contourpy
 from scipy.spatial import ConvexHull
 
 class InverseMultiquadricKernel:
-    def __init__(self, c=1.0):
+    def __init__(self, c=2.0):
         self.c = c
 
     def __call__(self, X, Y=None):
@@ -53,7 +53,7 @@ class GaussianProcessRegressor:
 class GPISModel:
     def __init__(self, x, y, yaw, laser1, value1,
                  boundary_sample_ratio=0.1, interior_sample_ratio=0.05, 
-                 kernel=None, alpha=1e-2, angle_threshold_degrees=16):
+                 kernel=None, alpha=1e-2, angle_threshold_degrees=15):
         x = np.array(x)
         y = np.array(y)
         yaw = np.array(yaw)
