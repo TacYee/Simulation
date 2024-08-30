@@ -241,7 +241,6 @@ def main(cfg):
             R_transpose, _ = process_quaternion(drone_state, rot_z_45)
             goal_world = transform_velocity(vel_side, R_transpose)
             apply_control(drone, drone_state, controller, goal_world, "Find the goal")
-            CF_action_counter = 0
             goal_counter -= 1
         elif CF_action_counter > 0:
             CF_action_counter = control_drone(drone, drone_state, depth1_noisy, depth2_noisy, cf_vel_forward, cf_vel_backward, 
@@ -250,13 +249,15 @@ def main(cfg):
             depth_last = depth_now
             depth_now = depth2_noisy
             residuals = depth_now - depth_last
-            if residuals > 0.05:
+            if residuals > 0.08:
                 goal_counter = 100
-            if depth1_noisy < 0.48:
+                CF_action_counter = 0
+                backward_action_counter = 0
+                direction_change_counter = 0
+            if depth1_noisy < 0.48 and i % 10 == 0:
                 laser_value1 = 1
-            if depth2_noisy < 0.48:
+            if depth2_noisy < 0.48 and i % 10 == 0:
                 laser_value2 = 1
-            finish_CF = True
         elif backward_action_counter > 0:
             R_transpose, _ = process_quaternion(drone_state, rot_z_45)
             backward_world = transform_velocity(vel_backward, R_transpose)
@@ -273,9 +274,9 @@ def main(cfg):
                 direction_change_counter = 0
                 direction_changes_completed += 1
 
-            if depth1_noisy > 0.48:
+            if depth1_noisy > 0.48 and depth1_noisy < 0.51 and i % 50 == 0:
                 laser_value1 = -1
-            if depth2_noisy > 0.48:
+            if depth2_noisy > 0.48 and depth2_noisy < 0.51 and i % 50 == 0:
                 laser_value2 = -1
             if direction_changes_completed >= 4 and finish_CF:
                 gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1, laser_values1)
@@ -295,6 +296,7 @@ def main(cfg):
                 CF_action_counter = 150
                 backward_action_counter = 250
                 direction_change_counter = 300
+                finish_CF = True
                 random_direction_rad = np.deg2rad(-90)
                 random_yaw = torch.tensor([random_direction_rad], device=sim.device)
                 print("CF start")

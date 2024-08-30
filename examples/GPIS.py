@@ -52,7 +52,7 @@ class GaussianProcessRegressor:
 
 class GPISModel:
     def __init__(self, x, y, yaw, laser1, value1,
-                 boundary_sample_ratio=1, interior_sample_ratio=0.05, 
+                 boundary_sample_ratio=1, interior_sample_ratio=1, 
                  kernel=None, alpha=1e-2, angle_threshold_degrees=15):
         x = np.array(x)
         y = np.array(y)
