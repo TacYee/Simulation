@@ -34,7 +34,7 @@ class GaussianProcessRegressor:
         self.K_inv = np.linalg.inv(K)
 
     def predict(self, X_test, return_std=False):
-        # 计算核矩阵 K(X_test, X_train)
+        # 计算核矩阵 K(X_tessst, X_train)
         K_trans = self.kernel(X_test, self.X_train)
 
         # 计算均值
@@ -53,7 +53,7 @@ class GaussianProcessRegressor:
 class GPISModel:
     def __init__(self, x, y, yaw, laser1, value1,
                  boundary_sample_ratio=1, interior_sample_ratio=1, 
-                 kernel=None, alpha=1e-2, angle_threshold_degrees=15):
+                 kernel=None, alpha=1e-2, angle_threshold_degrees=20, normal_threshold_degrees=0.5):
         x = np.array(x)
         y = np.array(y)
         yaw = np.array(yaw)
@@ -87,6 +87,7 @@ class GPISModel:
         self.kernel = kernel if kernel else InverseMultiquadricKernel(c=2)
         self.alpha = alpha
         self.angle_threshold_degrees = angle_threshold_degrees
+        self.normal_threshold_degrees = normal_threshold_degrees
         
         self.X_train = None
         self.y_train = None
@@ -104,7 +105,7 @@ class GPISModel:
         boundary_indices = np.random.choice(len(self.X_boundary), num_boundary_samples, replace=False)
         X_boundary_sampled = self.X_boundary[boundary_indices]
         y_boundary_sampled = self.y_boundary[boundary_indices]
-
+        
         # 下采样内部点
         num_interior_samples = int(len(self.X_interior) * self.interior_sample_ratio)
         interior_indices = np.random.choice(len(self.X_interior), num_interior_samples, replace=False)
@@ -120,8 +121,8 @@ class GPISModel:
         self.gp.fit(self.X_train, self.y_train)
     
     def predict(self):
-        x = np.linspace(-3, 3, 20)
-        y = np.linspace(-3, 3, 20)
+        x = np.linspace(-3, 3, 10)
+        y = np.linspace(-3, 3, 10)
         X, Y = np.meshgrid(x, y)
         X_test = np.vstack([X.ravel(), Y.ravel()]).T
         y_pred, sigma = self.gp.predict(X_test, return_std=True)
@@ -133,7 +134,7 @@ class GPISModel:
 
         contour_sigma_interp = griddata(X_test, sigma.ravel(), self.contour_points, method='linear')
 
-        hull_points, self.significant_points = self._find_high_curvature_points(self.contour_points, angle_threshold_degrees=self.angle_threshold_degrees)
+        self.significant_points = self._find_high_curvature_clusters_with_normals(self.contour_points, angle_threshold_degrees=self.angle_threshold_degrees, normal_threshold=self.normal_threshold_degrees)
 
         penalty = self._potential_function(grid_points, self.significant_points, c=0.4)
         penalty_contour = self._potential_function(self.contour_points, self.significant_points, c=0.4)
@@ -155,28 +156,6 @@ class GPISModel:
         P = -np.exp(-distances**2 / (2 * c**2))
         return np.min(P, axis=1)
     
-    def _find_high_curvature_points(self, points, angle_threshold_degrees=10):
-        """找出曲率大于指定角度的点"""
-        # 计算凸包
-        hull = ConvexHull(points)
-        hull_points = points[hull.vertices]
-    
-        # 转换角度阈值为弧度
-        angle_threshold_radians = np.deg2rad(angle_threshold_degrees)
-    
-        # 计算每个点的曲率（角度）并筛选出曲率大于阈值的点
-        high_curvature_points = []
-        for i in range(len(hull_points)):
-            p1 = hull_points[i - 1]
-            p2 = hull_points[i]
-            p3 = hull_points[(i + 1) % len(hull_points)]
-        
-            angle = self._compute_angle(p1, p2, p3)
-            if angle > angle_threshold_radians:
-                high_curvature_points.append(p2)
-    
-        return hull_points, np.array(high_curvature_points)
-    
     def _compute_angle(self, p1, p2, p3):
         """计算三个点形成的角度，返回弧度值"""
         v1 = p2 - p1
@@ -184,6 +163,61 @@ class GPISModel:
         cosine_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
         angle = np.arccos(np.clip(cosine_angle, -1.0, 1.0))
         return angle
+    def _compute_normal(self, p1, p2):
+        """计算二维点的法向量"""
+        tangent = p2 - p1  # 切向量
+        normal = np.array([-tangent[1], tangent[0]])  # 垂直于切向量的法向量
+        normal = normal / np.linalg.norm(normal)  # 归一化法向量
+        return normal
+    
+    def _find_high_curvature_clusters_with_normals(self, points, angle_threshold_degrees=10, normal_threshold=0.9  ):
+        """找出曲率大于指定角度且法向量相似的连续点簇"""
+        # 计算凸包
+    
+        # 转换角度阈值为弧度
+        angle_threshold_radians = np.deg2rad(angle_threshold_degrees)
+    
+        clusters = []
+        current_cluster = []
+    
+        for i in range(len(points)):
+            p1 = points[i - 1]
+            p2 = points[i]
+            p3 = points[(i + 1) % len(points)]
+        
+            # 计算曲率（夹角）
+            angle = self._compute_angle(p1, p2, p3)
+        
+            # 计算法向量
+            normal1 = self._compute_normal(p1, p2)
+            normal2 = self._compute_normal(p2, p3)
+        
+            # 计算法向量相似性（余弦夹角）
+            cos_theta = np.dot(normal1, normal2)
+        
+            # 判断曲率是否大于阈值，且法向量相似
+            if angle > angle_threshold_radians:
+                current_cluster.append(p2)
+                if cos_theta < normal_threshold:
+                    clusters.append(current_cluster)
+                    current_cluster = []
+            else:
+                if current_cluster:
+                    clusters.append(current_cluster)
+                    current_cluster = []
+    
+        if current_cluster:
+            clusters.append(current_cluster)
+    
+        # 计算每个簇的质心
+        significant_points = []
+        for cluster in clusters:
+            cluster = np.array(cluster)
+            centroid = np.mean(cluster, axis=0)
+            significant_points.append(centroid)
+    
+        return np.array(significant_points)
+    
     
     def find_max_uncertainty_point(self):
         max_uncertainty_index = np.argmax(self.contour_sigma_penalized)
@@ -191,8 +225,8 @@ class GPISModel:
         return self.max_uncertainty_point
     
     def plot_results(self, filename=None):
-        x = np.linspace(-3, 3, 20)
-        y = np.linspace(-3, 3, 20)
+        x = np.linspace(-3, 3, 10)
+        y = np.linspace(-3, 3, 10)
         X, Y = np.meshgrid(x, y)
 
         plt.figure(figsize=(14, 6))

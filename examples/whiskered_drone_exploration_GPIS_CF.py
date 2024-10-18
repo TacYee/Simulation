@@ -41,7 +41,7 @@ def main(cfg):
     )
 
     scene_utils.design_scene()
-    scene_utils.create_wall()
+    scene_utils.create_wall2()
     
     n = 1  # 设置无人机数量为1
     MAX_THRESHOLD = 0.45
@@ -254,9 +254,9 @@ def main(cfg):
                 CF_action_counter = 0
                 backward_action_counter = 0
                 direction_change_counter = 0
-            if depth1_noisy < 0.48 and i % 10 == 0:
+            if depth1_noisy < 0.48 and i % 30 == 0:
                 laser_value1 = 1
-            if depth2_noisy < 0.48 and i % 10 == 0:
+            if depth2_noisy < 0.48 and i % 30 == 0:
                 laser_value2 = 1
         elif backward_action_counter > 0:
             R_transpose, _ = process_quaternion(drone_state, rot_z_45)
@@ -274,9 +274,9 @@ def main(cfg):
                 direction_change_counter = 0
                 direction_changes_completed += 1
 
-            if depth1_noisy > 0.48 and depth1_noisy < 0.51 and i % 50 == 0:
+            if depth1_noisy > 0.48 and depth1_noisy < 0.51 and i % 120 == 0:
                 laser_value1 = -1
-            if depth2_noisy > 0.48 and depth2_noisy < 0.51 and i % 50 == 0:
+            if depth2_noisy > 0.48 and depth2_noisy < 0.51 and i % 120 == 0:
                 laser_value2 = -1
             if direction_changes_completed >= 4 and finish_CF:
                 gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1, laser_values1)
