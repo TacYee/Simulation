@@ -172,9 +172,12 @@ class LeePositionController(nn.Module):
         b1_des = torch.cat([
             torch.cos(target_yaw), 
             torch.sin(target_yaw), 
+            
             torch.zeros_like(target_yaw)
         ],dim=-1)
         b3_des = -normalize(acc)
+        b1_des = b1_des.float()  # 强制转换为 float32
+        b3_des = b3_des.float()  # 强制转换为 float32
         b2_des = normalize(torch.cross(b3_des, b1_des, 1))
         R_des = torch.stack([
             b2_des.cross(b3_des, 1), 
@@ -224,7 +227,7 @@ class AttitudeController(nn.Module):
         self.mixer = nn.Parameter(compute_parameters(rotor_config, I))
         #change p from 3 to 6
         self.gain_attitude = nn.Parameter(
-            torch.tensor([6., 3., 0.035]) @ I[:3, :3].inverse()
+            torch.tensor([3., 3., 0.035]) @ I[:3, :3].inverse()
         )
         self.gain_angular_rate = nn.Parameter(
             torch.tensor([0.52, 0.52, 0.025]) @ I[:3, :3].inverse()

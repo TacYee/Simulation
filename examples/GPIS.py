@@ -53,7 +53,7 @@ class GaussianProcessRegressor:
 class GPISModel:
     def __init__(self, x, y, yaw, laser1, value1,
                  boundary_sample_ratio=1, interior_sample_ratio=1, 
-                 kernel=None, alpha=1e-2, angle_threshold_degrees=20, normal_threshold_degrees=0.5):
+                 kernel=None, alpha=1e-2, max_normal_threshold=0.9, min_normal_threshold=0.5):
         x = np.array(x)
         y = np.array(y)
         yaw = np.array(yaw)
@@ -86,8 +86,8 @@ class GPISModel:
         self.interior_sample_ratio = interior_sample_ratio
         self.kernel = kernel if kernel else InverseMultiquadricKernel(c=2)
         self.alpha = alpha
-        self.angle_threshold_degrees = angle_threshold_degrees
-        self.normal_threshold_degrees = normal_threshold_degrees
+        self.min_normal_threshold = max_normal_threshold
+        self.normal_threshold_degrees = min_normal_threshold
         
         self.X_train = None
         self.y_train = None
@@ -134,7 +134,7 @@ class GPISModel:
 
         contour_sigma_interp = griddata(X_test, sigma.ravel(), self.contour_points, method='linear')
 
-        self.significant_points = self._find_high_curvature_clusters_with_normals(self.contour_points, angle_threshold_degrees=self.angle_threshold_degrees, normal_threshold=self.normal_threshold_degrees)
+        self.significant_points = self._find_high_curvature_clusters_with_normals(self.contour_points, max_normal_threshold=self.max_normal_threshold, min_normal_threshold=self.min_normal_threshold)
 
         penalty = self._potential_function(grid_points, self.significant_points, c=0.4)
         penalty_contour = self._potential_function(self.contour_points, self.significant_points, c=0.4)
@@ -170,12 +170,8 @@ class GPISModel:
         normal = normal / np.linalg.norm(normal)  # 归一化法向量
         return normal
     
-    def _find_high_curvature_clusters_with_normals(self, points, angle_threshold_degrees=10, normal_threshold=0.9  ):
+    def _find_high_curvature_clusters_with_normals(self,points, max_normal_threshold=0.9, min_normal_threshold=0.5):
         """找出曲率大于指定角度且法向量相似的连续点簇"""
-        # 计算凸包
-    
-        # 转换角度阈值为弧度
-        angle_threshold_radians = np.deg2rad(angle_threshold_degrees)
     
         clusters = []
         current_cluster = []
@@ -185,8 +181,6 @@ class GPISModel:
             p2 = points[i]
             p3 = points[(i + 1) % len(points)]
         
-            # 计算曲率（夹角）
-            angle = self._compute_angle(p1, p2, p3)
         
             # 计算法向量
             normal1 = self._compute_normal(p1, p2)
@@ -196,9 +190,9 @@ class GPISModel:
             cos_theta = np.dot(normal1, normal2)
         
             # 判断曲率是否大于阈值，且法向量相似
-            if angle > angle_threshold_radians:
+            if cos_theta < max_normal_threshold:
                 current_cluster.append(p2)
-                if cos_theta < normal_threshold:
+                if cos_theta < min_normal_threshold:
                     clusters.append(current_cluster)
                     current_cluster = []
             else:
