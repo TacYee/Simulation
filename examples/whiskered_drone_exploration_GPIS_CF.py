@@ -254,9 +254,9 @@ def main(cfg):
                 CF_action_counter = 0
                 backward_action_counter = 0
                 direction_change_counter = 0
-            if depth1_noisy < 0.48 and i % 30 == 0:
+            if depth1_noisy < 0.48 and i % 40 == 0:
                 laser_value1 = 1
-            if depth2_noisy < 0.48 and i % 30 == 0:
+            if depth2_noisy < 0.48 and i % 40 == 0:
                 laser_value2 = 1
         elif backward_action_counter > 0:
             R_transpose, _ = process_quaternion(drone_state, rot_z_45)
@@ -279,7 +279,7 @@ def main(cfg):
             if depth2_noisy > 0.48 and depth2_noisy < 0.51 and i % 120 == 0:
                 laser_value2 = -1
             if direction_changes_completed >= 4 and finish_CF:
-                gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1, laser_values1)
+                gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1, laser_values1, curvature_threshold=-0.7)
                 gpis.sample_data()
                 gpis.train_model()
                 gpis.predict()
@@ -305,7 +305,8 @@ def main(cfg):
                             vel_backward, vel_side, rot_z_45, controller, 
                             yaw_left, yaw_right,  MIN_THRESHOLD, MAX_THRESHOLD)
 
-        sim.step(render=True)
+        sim.step(render=(i % 10 == 0))
+        # lidarInterface.update() 
         drone_state = drone.get_state()[..., :13].squeeze(0)
         print(drone_state)
         print(direction_changes_completed)

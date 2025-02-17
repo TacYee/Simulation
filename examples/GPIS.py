@@ -53,7 +53,7 @@ class GaussianProcessRegressor:
 class GPISModel:
     def __init__(self, x, y, yaw, laser1, value1,
                  boundary_sample_ratio=1, interior_sample_ratio=1, 
-                 kernel=None, alpha=1e-2, max_normal_threshold=0.9, min_normal_threshold=0.5):
+                 kernel=None, alpha=1e-2, curvature_threshold=-1):
         x = np.array(x)
         y = np.array(y)
         yaw = np.array(yaw)
@@ -86,8 +86,7 @@ class GPISModel:
         self.interior_sample_ratio = interior_sample_ratio
         self.kernel = kernel if kernel else InverseMultiquadricKernel(c=2)
         self.alpha = alpha
-        self.min_normal_threshold = max_normal_threshold
-        self.normal_threshold_degrees = min_normal_threshold
+        self.curvature_threshold = curvature_threshold
         
         self.X_train = None
         self.y_train = None
@@ -98,6 +97,8 @@ class GPISModel:
         self.penalized_uncertainty_grid = None
         self.contour_sigma_penalized = None
         self.max_uncertainty_point = None
+        self.weights = None
+        self.curvature = None
     
     def sample_data(self):
         # 下采样边界点
@@ -129,15 +130,17 @@ class GPISModel:
         self.Z = y_pred.reshape(X.shape)
         self.sigma = sigma.reshape(X.shape)
         self.contour_points = self._extract_contour_points(X, Y)
+        self.weights = self.gp.K_inv.dot(self.y_train) 
+        self.curvature = self._compute_curvature_kernel(self.contour_points, self.weights, self.X_train, self.kernel)
 
         grid_points = np.vstack([X.ravel(), Y.ravel()]).T
 
         contour_sigma_interp = griddata(X_test, sigma.ravel(), self.contour_points, method='linear')
 
-        self.significant_points = self._find_high_curvature_clusters_with_normals(self.contour_points, max_normal_threshold=self.max_normal_threshold, min_normal_threshold=self.min_normal_threshold)
+        self.significant_points = self._find_high_curvature_clusters_using_curvature(self.contour_points, self.weights, self.curvature_threshold)
 
-        penalty = self._potential_function(grid_points, self.significant_points, c=0.4)
-        penalty_contour = self._potential_function(self.contour_points, self.significant_points, c=0.4)
+        penalty = self._potential_function(grid_points, self.significant_points, c=0.3)
+        penalty_contour = self._potential_function(self.contour_points, self.significant_points, c=0.3)
 
         original_uncertainty = sigma.ravel()
         penalized_uncertainty = original_uncertainty + penalty
@@ -170,38 +173,34 @@ class GPISModel:
         normal = normal / np.linalg.norm(normal)  # 归一化法向量
         return normal
     
-    def _find_high_curvature_clusters_with_normals(self,points, max_normal_threshold=0.9, min_normal_threshold=0.5):
-        """找出曲率大于指定角度且法向量相似的连续点簇"""
+    def _find_high_curvature_clusters_using_curvature(self, contour_points, curvatures, curvature_threshold=0.5):
+        """根据计算出的曲率值找出曲率大于阈值的连续点簇，并处理封闭图形"""
     
         clusters = []
         current_cluster = []
+        n = len(contour_points)
     
-        for i in range(len(points)):
-            p1 = points[i - 1]
-            p2 = points[i]
-            p3 = points[(i + 1) % len(points)]
-        
-        
-            # 计算法向量
-            normal1 = self._compute_normal(p1, p2)
-            normal2 = self._compute_normal(p2, p3)
-        
-            # 计算法向量相似性（余弦夹角）
-            cos_theta = np.dot(normal1, normal2)
-        
-            # 判断曲率是否大于阈值，且法向量相似
-            if cos_theta < max_normal_threshold:
-                current_cluster.append(p2)
-                if cos_theta < min_normal_threshold:
-                    clusters.append(current_cluster)
-                    current_cluster = []
+        for i in range(n):
+            # 如果曲率大于设定的阈值，则将当前点添加到当前簇中
+            if curvatures[i] < curvature_threshold:
+                current_cluster.append(contour_points[i])
             else:
+                # 当曲率小于阈值时，若 current_cluster 不为空，则保存它
                 if current_cluster:
                     clusters.append(current_cluster)
-                    current_cluster = []
+                # 开始新的簇
+                current_cluster = []
     
+        # 处理剩余的簇
         if current_cluster:
             clusters.append(current_cluster)
+    
+        # 检查第一个点和最后一个点是否可以形成连续簇（封闭图形的情形）
+        if clusters and len(clusters) > 1:
+            if curvatures[0] < curvature_threshold and curvatures[-1] < curvature_threshold:
+                # 合并第一个和最后一个簇
+                clusters[0] = clusters[-1] + clusters[0]
+                clusters.pop(-1)
     
         # 计算每个簇的质心
         significant_points = []
@@ -211,6 +210,46 @@ class GPISModel:
             significant_points.append(centroid)
     
         return np.array(significant_points)
+
+    def _compute_curvature_kernel(self, contour_points, weights, X_train, kernel):
+        """
+        在核函数上直接计算 GPIS=0 等值线的曲率
+        :param X_test: 测试点集
+        :param contour_points: GPIS=0 的等值线点
+        :param weights: 高斯过程的权重
+        :param X_train: 训练点
+        :param kernel: 核函数实例
+        :return: 等值线点的曲率值
+        """
+        c2 = kernel.c**2
+        curvatures = []
+
+        for x in contour_points:
+            # 计算距离和梯度
+            diffs = x - X_train
+            d2 = np.sum(diffs**2, axis=1)  # ||x - xi||^2
+            d2_c2 = d2 + c2
+
+            # 一阶导数 (gradient)
+            grad = np.sum(weights[:, None] * (-diffs / d2_c2[:, None]**(3 / 2)), axis=0)
+
+            # 二阶导数 (Hessian)
+            hessian = np.zeros((2, 2))
+            for i, diff in enumerate(diffs):
+                outer = np.outer(diff, diff)
+                hessian += weights[i] * (3 * outer / d2_c2[i]**(5 / 2) - np.eye(2) / d2_c2[i]**(3 / 2))
+
+            # 计算曲率公式
+            grad_norm = np.linalg.norm(grad)
+            if grad_norm == 0:  # 避免除以零
+                curvatures.append(0)
+                continue
+            tr_hessian = np.trace(hessian)
+            numerator = grad @ hessian @ grad - grad_norm**2 * tr_hessian
+            curvature = numerator / grad_norm**3
+            curvatures.append(curvature)
+
+        return np.array(curvatures)
     
     
     def find_max_uncertainty_point(self):
