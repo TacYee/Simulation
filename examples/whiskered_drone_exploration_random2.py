@@ -2,12 +2,30 @@ import torch
 import pandas as pd
 import hydra
 from omegaconf import OmegaConf
+import signal
 from omni_drones import CONFIG_PATH, init_simulation_app
 import omni
 import numpy as np
 from utlis import *
 from GPIS import GPISModel
-
+import sys
+def save_data_and_exit(signum, frame):
+    print("\n🚨 检测到 Ctrl + Z 或意外终止，正在保存数据...")
+    
+    data = {
+        'state_xs': state_xs,
+        'state_ys': state_ys,
+        'state_yaws': state_yaws,
+        'state_lasers1': state_lasers1,
+        'state_lasers2': state_lasers2,
+        'laser_values1': laser_values1,
+        'laser_values2': laser_values2,
+    }
+    df = pd.DataFrame(data)
+    df.to_csv('T-6-random_fail.csv', index=False)  # **保存数据**
+    
+    print("✅ 数据保存成功，安全退出。")
+    sys.exit(0)  # 终止程序
 @hydra.main(version_base=None, config_path=".", config_name="demo")
 def main(cfg):
     OmegaConf.resolve(cfg)
@@ -209,7 +227,7 @@ def main(cfg):
     drone_state = drone.get_state()[..., :13].squeeze(0)
 
     from tqdm import tqdm
-    for i in tqdm(range(15000)):
+    for i in tqdm(range(12000)):
         if sim.is_stopped():
             break
         if not sim.is_playing():
@@ -278,15 +296,11 @@ def main(cfg):
             if torch.abs(normalize_angle(current_yaw) - normalize_angle(target_yaw)) < 1.5:
                 direction_change_counter = 0
                 direction_changes_completed += 1
-            if direction_changes_completed >= 4 and finish_CF:
-                gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1,state_lasers2, laser_values1, laser_values2, curvature_threshold=-0.8)
-                gpis.sample_data()
-                gpis.train_model()
-                gpis.predict()
-                next_point = gpis.find_max_uncertainty_point()
-                target_yaw = torch.tensor([np.arctan2(next_point[1] - state_y, next_point[0] - state_x)], device=sim.device) + 0.7853981
+            if direction_changes_completed >= 1 and finish_CF:
+                random_yaw = np.random.uniform(0, 2 * np.pi)
+                target_yaw = torch.tensor([random_yaw], device=sim.device)
                 direction_change_counter = 500
-                gpis.plot_results(filename='gpis_results.png')
+                # gpis.plot_results(filename='gpis_results.png')
                 finish_CF = False
             print(torch.rad2deg(current_yaw + 0.7853981))
             print(torch.rad2deg(target_yaw))
@@ -297,8 +311,6 @@ def main(cfg):
                 backward_action_counter = 250
                 direction_change_counter = 300
                 finish_CF = True
-                random_direction_rad = np.deg2rad(-90)
-                random_yaw = torch.tensor([random_direction_rad], device=sim.device)
                 print("CF start")
             else:
                 control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, 
@@ -337,10 +349,11 @@ def main(cfg):
                 'laser_values2': laser_values2,
             }
             df = pd.DataFrame(data)
-            df.to_csv('T-8-ours_success.csv', index=False)  # **实时保存**
+            df.to_csv('T-6-random_success.csv', index=False)  # **实时保存**
             break  # 无人机飞出房间，结束任务
 
-
+    signal.signal(signal.SIGINT, save_data_and_exit)  # Ctrl + C
+    signal.signal(signal.SIGTSTP, save_data_and_exit)  # Ctrl + Z
 
     # **保存数据并确保仿真关闭**
     data = {
@@ -353,7 +366,7 @@ def main(cfg):
         'laser_values2': laser_values2,
     }
     df = pd.DataFrame(data)
-    df.to_csv('T-8-ours_fail.csv', index=False)
+    df.to_csv('T-6-random_fail.csv', index=False)
 
     simulation_app.close()  # 仿真结束后关闭
 

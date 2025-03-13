@@ -6,7 +6,7 @@ from omni_drones import CONFIG_PATH, init_simulation_app
 import omni
 import numpy as np
 from utlis import *
-from GPIS import GPISModel
+from GPIS2 import GPISModel
 
 @hydra.main(version_base=None, config_path=".", config_name="demo")
 def main(cfg):
@@ -209,7 +209,7 @@ def main(cfg):
     drone_state = drone.get_state()[..., :13].squeeze(0)
 
     from tqdm import tqdm
-    for i in tqdm(range(15000)):
+    for i in tqdm(range(12000)):
         if sim.is_stopped():
             break
         if not sim.is_playing():
@@ -255,10 +255,6 @@ def main(cfg):
                 CF_action_counter = 0
                 backward_action_counter = 0
                 direction_change_counter = 0
-            if depth1_noisy < 0.48 and i % 40 == 0:
-                laser_value1 = 1
-            if depth2_noisy < 0.48 and i % 40 == 0:
-                laser_value2 = 1
         elif backward_action_counter > 0:
             R_transpose, _ = process_quaternion(drone_state, rot_z_45)
             backward_world = transform_velocity(vel_backward, R_transpose)
@@ -278,7 +274,7 @@ def main(cfg):
             if torch.abs(normalize_angle(current_yaw) - normalize_angle(target_yaw)) < 1.5:
                 direction_change_counter = 0
                 direction_changes_completed += 1
-            if direction_changes_completed >= 4 and finish_CF:
+            if direction_changes_completed >= 1 and finish_CF:
                 gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1,state_lasers2, laser_values1, laser_values2, curvature_threshold=-0.8)
                 gpis.sample_data()
                 gpis.train_model()
@@ -293,13 +289,15 @@ def main(cfg):
 
         else:
             if MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
-                CF_action_counter = 150
+                CF_action_counter = 0
                 backward_action_counter = 250
                 direction_change_counter = 300
                 finish_CF = True
                 random_direction_rad = np.deg2rad(-90)
                 random_yaw = torch.tensor([random_direction_rad], device=sim.device)
-                print("CF start")
+                laser_value1 = 1
+                laser_value2 = 1
+                print("Touch")
             else:
                 control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, 
                             vel_backward, vel_side, rot_z_45, controller, 
@@ -321,7 +319,6 @@ def main(cfg):
         laser_values2.append(laser_value2)
         laser_value1 = 0
         laser_value2 = 0 
-    
 
             # **检查无人机是否飞出房间**
         if state_x < ROOM_X_MIN or state_x > ROOM_X_MAX or state_y < ROOM_Y_MIN or state_y > ROOM_Y_MAX:
@@ -337,7 +334,7 @@ def main(cfg):
                 'laser_values2': laser_values2,
             }
             df = pd.DataFrame(data)
-            df.to_csv('T-8-ours_success.csv', index=False)  # **实时保存**
+            df.to_csv('T-3-BaseGPIS2_success.csv', index=False)  # **实时保存**
             break  # 无人机飞出房间，结束任务
 
 
@@ -353,7 +350,7 @@ def main(cfg):
         'laser_values2': laser_values2,
     }
     df = pd.DataFrame(data)
-    df.to_csv('T-8-ours_fail.csv', index=False)
+    df.to_csv('T-3-BaseGPIS2_fail.csv', index=False)
 
     simulation_app.close()  # 仿真结束后关闭
 

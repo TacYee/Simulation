@@ -152,24 +152,23 @@ class GPISModel:
         x_vals = [point.x for point in contour_points_all]
         y_vals = [point.y for point in contour_points_all]
         self.contour_points = np.column_stack((x_vals, y_vals))
-        self.weights = self.gp.K_inv.dot(self.y_train) 
-        self.curvature = self._compute_curvature_kernel(self.contour_points, self.weights, self.X_train, self.kernel)
-        print(f"curvatures: {self.curvature}")
-        grid_points = np.vstack([X.ravel(), Y.ravel()]).T
+        # self.weights = self.gp.K_inv.dot(self.y_train) 
+        # self.curvature = self._compute_curvature_kernel(self.contour_points, self.weights, self.X_train, self.kernel)
+        # grid_points = np.vstack([X.ravel(), Y.ravel()]).Tprint(f"curvatures: {self.curvature}")
 
         contour_sigma_interp = [point.y_std for point in contour_points_all]
 
-        self.significant_points = self._find_high_curvature_clusters_using_curvature(self.contour_points, self.curvature, self.curvature_threshold)
-        print(f"significant_points: {self.significant_points}")
-        print(f"significant_points shape: {self.significant_points.shape}")
-        penalty = self._potential_function(grid_points, self.significant_points, c=0.2)
-        penalty_contour = self._potential_function(self.contour_points, self.significant_points, c=0.2)
+        # self.significant_points = self._find_high_curvature_clusters_using_curvature(self.contour_points, self.curvature, self.curvature_threshold)
+        # print(f"significant_points: {self.significant_points}")
+        # print(f"significant_points shape: {self.significant_points.shape}")
+        # penalty = self._potential_function(grid_points, self.significant_points, c=0.2)
+        # penalty_contour = self._potential_function(self.contour_points, self.significant_points, c=0.2)
 
         original_uncertainty = sigma.ravel()
-        penalized_uncertainty = original_uncertainty + penalty
+        penalized_uncertainty = original_uncertainty
 
         self.penalized_uncertainty_grid = penalized_uncertainty.reshape(X.shape)
-        self.contour_sigma_penalized = contour_sigma_interp + penalty_contour
+        self.contour_sigma_penalized = contour_sigma_interp
 
     class Point:
         def __init__(self, x, y, y_std):
@@ -439,7 +438,6 @@ class GPISModel:
         plt.scatter(self.X_train[:, 0], self.X_train[:, 1], c=self.y_train, cmap="coolwarm", edgecolor="k", s=3)
         plt.scatter(self.max_uncertainty_point[0], self.max_uncertainty_point[1], color='red', s=100, edgecolor='black', label='Max Uncertainty Point')
         plt.contour(X, Y, self.Z, levels=[0], colors='red')
-        plt.scatter(self.significant_points[:, 0], self.significant_points[:, 1], c='white', s=30, label='Significant Curvature Points')
         plt.title("2D GPIS with RBF Kernel")
         plt.xlabel("X")
         plt.ylabel("Y")
