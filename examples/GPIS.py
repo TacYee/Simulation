@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import griddata
 import contourpy
+import alphashape
 # from sklearn.gaussian_process import GaussianProcessRegressor
 # from sklearn.gaussian_process.kernels import Kernel
 from scipy.spatial import ConvexHull
@@ -49,7 +50,144 @@ class GaussianProcessRegressor:
             return y_mean, y_std
         else:
             return y_mean
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+class AlphaShape:
+    def __init__(self, boundary_points, interior_points, alpha):
+        # 计算每四个点为一组的墙壁中心点
+        self.batch_centers, self.batch_data = self.compute_wall_centers(boundary_points)
+        # 合并 boundary 和 interior 数据
+        self.interior_points = interior_points
+        self.alpha_input = np.vstack([self.batch_centers , self.interior_points ])
+        # 计算 alpha-shape
+        self.alpha_shape = self.compute_alpha_shape(self.alpha_input, alpha)
 
+    def compute_wall_centers(self, boundary_points):
+        """每四个点为一组计算墙壁点的中心"""
+        batch_centers = []
+        batch_data = []  # 用于保存每个批次的所有点
+        current_batch_x = []
+        current_batch_y = []
+        current_batch_data = []  # 用于保存当前批次的所有数据
+
+        for i in range(len(boundary_points)):
+            x, y = boundary_points[i]
+            current_batch_x.append(x)
+            current_batch_y.append(y)
+            current_batch_data.append((x, y))  # 保存当前点数据
+
+            # 每四个墙壁点为一批，计算中心点
+            if len(current_batch_x) == 4:
+                center_x = np.mean(current_batch_x)
+                center_y = np.mean(current_batch_y)
+                batch_centers.append((center_x, center_y))
+                batch_data.append(current_batch_data)  # 保存整个批次的数据
+                current_batch_x = []  # 清空当前批次
+                current_batch_y = []  # 清空当前批次
+                current_batch_data = []  # 清空当前批次数据
+
+        # **处理最后一批数据**
+        if current_batch_x:
+            center_x = np.mean(current_batch_x)
+            center_y = np.mean(current_batch_y)
+            batch_centers.append((center_x, center_y))
+            batch_data.append(current_batch_data)
+        return batch_centers, batch_data
+    def compute_alpha_shape(self, batch_centers, alpha):
+        """计算 alpha-shape 轮廓"""
+        if len(batch_centers) < 4:
+            print("⚠️ Alpha-shape 需要至少 4 个点，点数太少，无法计算")
+            return None
+        return alphashape.alphashape(batch_centers, alpha)
+    
+    def point_to_segment_distance(self, px, py, x1, y1, x2, y2):
+        """计算点(px, py) 到 线段 (x1, y1)-(x2, y2) 的最短距离"""
+        A = px - x1
+        B = py - y1
+        C = x2 - x1
+        D = y2 - y1
+
+        dot = A * C + B * D
+        len_sq = C * C + D * D
+        param = -1 if len_sq == 0 else dot / len_sq
+
+        if param < 0:
+            xx, yy = x1, y1
+        elif param > 0:
+            xx, yy = x2, y2
+        else:
+            xx = x1 + param * C
+            yy = y1 + param * D
+
+        dx = px - xx
+        dy = py - yy
+        return np.sqrt(dx * dx + dy * dy)
+    
+    def is_center_on_boundary(self, center):
+        """检查某个中心点是否在 alpha-shape 轮廓上"""
+        if not self.alpha_shape:
+            return False  # 没有 alpha-shape 时，默认返回 False
+
+        x, y = center
+        boundary_points = list(self.alpha_shape.exterior.coords)  # 获取 alpha-shape 的边界点列表
+        
+        threshold = 1e-6  # 设定一个距离阈值
+        for i in range(len(boundary_points) - 1):  # 遍历所有边界线段
+            x1, y1 = boundary_points[i]
+            x2, y2 = boundary_points[i + 1]
+            if self.point_to_segment_distance(x, y, x1, y1, x2, y2) < threshold:
+                return True  # 该点在边界上
+
+        return False
+
+    def filter_batches_by_alpha_shape(self):
+        """筛选所有批次数据，只有批次中心在 alpha-shape 边界上的批次才会保存"""
+        valid_batches = []
+
+        # 遍历每个批次的中心点
+        for i, center in enumerate(self.batch_centers):
+            if self.is_center_on_boundary(center):
+                valid_batches.append(self.batch_data[i])  # 保存整个批次的数据
+        if valid_batches:
+            valid_batches = np.vstack(valid_batches)  # 确保变成 NumPy 数组
+        else:
+            valid_batches = np.empty((0, 2))  # 处理空情况，防止 vstack 报错
+
+        return valid_batches
+    
+    def plot_alpha_shape(self):
+        """绘制 alpha-shape 轮廓以及用于构造的点"""
+        if not self.alpha_shape:
+            print("⚠️ 没有可用的 alpha-shape 可以绘制。")
+            return
+
+        fig, ax = plt.subplots()
+
+        # 绘制 alpha-shape 轮廓
+        if self.alpha_shape.geom_type == 'Polygon':
+            x, y = self.alpha_shape.exterior.xy
+            ax.plot(x, y, 'r-', label='Alpha Shape')
+        elif self.alpha_shape.geom_type == 'MultiPolygon':
+            for geom in self.alpha_shape.geoms:
+                x, y = geom.exterior.xy
+                ax.plot(x, y, 'r-', label='Alpha Shape')
+
+        # 绘制用于构造 alpha-shape 的点
+        if self.batch_centers:
+            center_x, center_y = zip(*self.batch_centers)
+            ax.scatter(center_x, center_y, color='blue', s=10, label='Contour')
+
+        if hasattr(self, 'interior_points') and self.interior_points is not None and len(self.interior_points) > 0:
+            ax.scatter(self.interior_points[:, 0], self.interior_points[:, 1], color='red', s=10, label='Inside')
+
+        ax.set_title("Alpha Shape with Points")
+        ax.set_aspect('equal')
+        ax.legend()
+        plt.show()
+
+    
 class GPISModel:
     def __init__(self, x, y, yaw, laser1, laser2, value1, value2,
                 boundary_sample_ratio=1, interior_sample_ratio=1, 
@@ -135,11 +273,11 @@ class GPISModel:
         self.X_train = np.vstack([X_boundary_sampled, X_interior_sampled])
         self.y_train = np.concatenate([y_boundary_sampled, y_interior_sampled])
     
-    def train_model(self):
+    def train_model(self, X_train, y_train):
         self.gp = GaussianProcessRegressor(kernel=self.kernel, alpha=self.alpha)
-        self.gp.fit(self.X_train, self.y_train)
+        self.gp.fit(X_train, y_train)
     
-    def predict(self):
+    def predict(self, X_train, y_train):
         x = np.linspace(-3, 3, 100)
         y = np.linspace(-3, 3, 100)
         X, Y = np.meshgrid(x, y)
@@ -152,8 +290,8 @@ class GPISModel:
         x_vals = [point.x for point in contour_points_all]
         y_vals = [point.y for point in contour_points_all]
         self.contour_points = np.column_stack((x_vals, y_vals))
-        self.weights = self.gp.K_inv.dot(self.y_train) 
-        self.curvature = self._compute_curvature_kernel(self.contour_points, self.weights, self.X_train, self.kernel)
+        self.weights = self.gp.K_inv.dot(y_train) 
+        self.curvature = self._compute_curvature_kernel(self.contour_points, self.weights,  X_train, self.kernel)
         print(f"curvatures: {self.curvature}")
         grid_points = np.vstack([X.ravel(), Y.ravel()]).T
 

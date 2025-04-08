@@ -6,7 +6,7 @@ from omni_drones import CONFIG_PATH, init_simulation_app
 import omni
 import numpy as np
 from utlis import *
-from GPIS import GPISModel
+from GPIS import GPISModel, AlphaShape
 
 @hydra.main(version_base=None, config_path=".", config_name="demo")
 def main(cfg):
@@ -41,7 +41,7 @@ def main(cfg):
     )
 
     scene_utils.design_scene()
-    scene_utils.create_wall2()
+    scene_utils.create_wall3()
     
     n = 1  # 设置无人机数量为1
     MAX_THRESHOLD = 0.45
@@ -191,6 +191,7 @@ def main(cfg):
     laser_values2 = []
     direction_changes_completed = 0
     finish_CF = False
+    Forward_counter = 0
     ROOM_X_MIN, ROOM_X_MAX = -2.8, 2.8
     ROOM_Y_MIN, ROOM_Y_MAX = -2.8, 2.8
     
@@ -238,11 +239,13 @@ def main(cfg):
         # 打印添加噪声后的深度数据
         print("Noisy depth1:", depth1_noisy)
         print("Noisy depth2:", depth2_noisy)
+        #find the goal
         if goal_counter > 0:
             R_transpose, _ = process_quaternion(drone_state, rot_z_45)
             goal_world = transform_velocity(vel_side, R_transpose)
             apply_control(drone, drone_state, controller, goal_world, "Find the goal")
             goal_counter -= 1
+        #CF
         elif CF_action_counter > 0:
             CF_action_counter = control_drone(drone, drone_state, depth1_noisy, depth2_noisy, cf_vel_forward, cf_vel_backward, 
                                                 vel_side, rot_z_45, controller, yaw_left, yaw_right, 
@@ -255,22 +258,25 @@ def main(cfg):
                 CF_action_counter = 0
                 backward_action_counter = 0
                 direction_change_counter = 0
-            if depth1_noisy < 0.48 and i % 40 == 0:
+            if depth1_noisy < 0.48 and CF_action_counter  % 40 == 0:
                 laser_value1 = 1
-            if depth2_noisy < 0.48 and i % 40 == 0:
+            if depth2_noisy < 0.48 and CF_action_counter  % 40 == 0:
                 laser_value2 = 1
+
+        # fly backward
         elif backward_action_counter > 0:
             R_transpose, _ = process_quaternion(drone_state, rot_z_45)
             backward_world = transform_velocity(vel_backward, R_transpose)
             apply_control(drone, drone_state, controller, backward_world, "fly backward")
             backward_action_counter -= 1
-            if backward_action_counter == 0:
+            if depth1_noisy > 0.48 and depth2_noisy > 0.48 and backward_action_counter % 40 == 0:
                 laser_value1 = -1
                 laser_value2 = -1
                 depth1_noisy = depth1 + noise1
                 depth2_noisy = depth2 + noise2
                 _, before_yaw = process_quaternion(drone_state, rot_z_45)
             target_yaw = before_yaw + random_yaw
+        # yawing
         elif direction_change_counter > 0:
             _, current_yaw = process_quaternion(drone_state, rot_z_45)
             perform_attitude_control(drone, drone_state, controller, target_yaw, "change orientation")
@@ -281,8 +287,14 @@ def main(cfg):
             if direction_changes_completed >= 4 and finish_CF:
                 gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1,state_lasers2, laser_values1, laser_values2, curvature_threshold=-0.8)
                 gpis.sample_data()
-                gpis.train_model()
-                gpis.predict()
+                # 创建 AlphaShape 实例并筛选符合条件的批次
+                alpha_shape_model = AlphaShape(gpis.X_boundary, gpis.X_interior, alpha=0.5)
+                valid_batches = alpha_shape_model.filter_batches_by_alpha_shape()
+                valid_batches_all = np.vstack([valid_batches , gpis.X_interior])
+                valid_batches_label = np.concatenate([np.zeros(len(valid_batches)), -np.ones(len(gpis.X_interior))])
+                alpha_shape_model.plot_alpha_shape()
+                gpis.train_model(valid_batches_all , valid_batches_label)
+                gpis.predict(valid_batches_all , valid_batches_label)
                 next_point = gpis.find_max_uncertainty_point()
                 target_yaw = torch.tensor([np.arctan2(next_point[1] - state_y, next_point[0] - state_x)], device=sim.device) + 0.7853981
                 direction_change_counter = 500
@@ -294,13 +306,18 @@ def main(cfg):
         else:
             if MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
                 CF_action_counter = 150
-                backward_action_counter = 250
+                backward_action_counter = 100
                 direction_change_counter = 300
+                Forward_counter = 0
                 finish_CF = True
                 random_direction_rad = np.deg2rad(-90)
                 random_yaw = torch.tensor([random_direction_rad], device=sim.device)
                 print("CF start")
             else:
+                if depth1_noisy > 0.48 and depth2_noisy > 0.48 and Forward_counter % 40 == 0:
+                    laser_value1 = -1
+                    laser_value2 = -1
+                Forward_counter += 1
                 control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, 
                             vel_backward, vel_side, rot_z_45, controller, 
                             yaw_left, yaw_right,  MIN_THRESHOLD, MAX_THRESHOLD)
@@ -337,7 +354,7 @@ def main(cfg):
                 'laser_values2': laser_values2,
             }
             df = pd.DataFrame(data)
-            df.to_csv('T-8-ours_success.csv', index=False)  # **实时保存**
+            df.to_csv('T-1-ours_multiobject.csv', index=False)  # **实时保存**
             break  # 无人机飞出房间，结束任务
 
 
@@ -353,7 +370,7 @@ def main(cfg):
         'laser_values2': laser_values2,
     }
     df = pd.DataFrame(data)
-    df.to_csv('T-8-ours_fail.csv', index=False)
+    df.to_csv('T-1-ours_fail_multiobject.csv', index=False)
 
     simulation_app.close()  # 仿真结束后关闭
 

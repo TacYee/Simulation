@@ -112,6 +112,7 @@ def control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, v
     else:
         backward_world = transform_velocity(vel_backward, R_transpose)
         apply_control(drone, drone_state, controller, backward_world, "fly backward")
+        counter -= 1
     
     return counter
 

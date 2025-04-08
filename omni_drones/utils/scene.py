@@ -101,9 +101,8 @@ def create_wall2():
             {"name": "fancy_cube2", "position": np.array([0.5, -2.1, 0]), "scale": np.array([3, 0.2, 2])},
             {"name": "fancy_cube3", "position": np.array([-1.1, -1.7, 0]), "scale": np.array([0.2, 1, 2])},
             {"name": "fancy_cube4", "position": np.array([-2.1, 0.5, 0]), "scale": np.array([0.2, 3.4, 2])},
-            {"name": "fancy_cube5", "position": np.array([2.1, 0.1, 0]), "scale": np.array([0.2, 4.4, 2])},
-            {"name": "fancy_cube6", "position": np.array([-0.9, 2.15, 0]), "scale": np.array([2.2, 0.3, 2])},
-            {"name": "fancy_cube7", "position": np.array([1.7, 2.15, 0]), "scale": np.array([0.6, 0.3, 2])}
+            {"name": "fancy_cube5", "position": np.array([2.1, 0.0, 0]), "scale": np.array([0.2, 4.4, 2])},
+            {"name": "fancy_cube6", "position": np.array([-0.6, 2.1, 0]), "scale": np.array([2.8, 0.2, 2])}
         ]
     # 生成一个随机旋转角度（以度为单位）
     random_angle = np.random.uniform(0, 360)
@@ -121,6 +120,42 @@ def create_wall2():
                 orientation=random_rotation,
                 mass = 0.5,
                 color=np.array([0, 0, 1.0])
+            ))
+
+def create_wall3():
+    world = World()
+    cubes = [
+            {"name": "fancy_cube1", "position": np.array([-1.5, -1.1, 0]), "scale": np.array([1, 0.2, 2])},
+            {"name": "fancy_cube2", "position": np.array([0.5, -2.1, 0]), "scale": np.array([3, 0.2, 2])},
+            {"name": "fancy_cube3", "position": np.array([-1.1, -1.7, 0]), "scale": np.array([0.2, 1, 2])},
+            {"name": "fancy_cube4", "position": np.array([-2.1, 0.5, 0]), "scale": np.array([0.2, 3.4, 2])},
+            {"name": "fancy_cube5", "position": np.array([2.1, 0.0, 0]), "scale": np.array([0.2, 4.4, 2])},
+            {"name": "fancy_cube6", "position": np.array([-0.6, 2.1, 0]), "scale": np.array([2.8, 0.2, 2])}
+        ]
+    cylinder = {"name": "fancy_cylinder1", "position": np.array([0, 0.8, 0]), "scale": np.array([0.3, 0.3, 2])}
+    # 生成一个随机旋转角度（以度为单位）
+    random_angle = np.random.uniform(0, 360)
+    # 将随机角度转换为弧度，并生成对应的欧拉角张量
+    euler_angles = torch.tensor([0, 0, np.radians(random_angle)])  # 这里假设旋转轴是z轴
+    random_rotation = euler_to_quaternion(euler_angles).numpy()
+    
+    for cube in cubes:
+            rotated_position = rotate_position(cube['position'], random_angle)
+            world.scene.add(DynamicCuboid(
+                prim_path=f"/World/{cube['name']}",
+                name=cube['name'],
+                position=rotated_position,
+                scale=cube['scale'],
+                orientation=random_rotation,
+                mass = 0.5,
+                color=np.array([0, 0, 1.0])
+            ))
+    world.scene.add(DynamicCylinder(
+                prim_path=f"/World/{cylinder['name']}",
+                name=cylinder['name'],
+                position=cylinder['position'],
+                scale=cylinder['scale'],
+                color=np.array([0, 0, 1.0]),
             ))
 
 def create_cyl():
