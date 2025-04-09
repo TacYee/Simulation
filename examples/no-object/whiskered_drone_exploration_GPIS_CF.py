@@ -98,7 +98,7 @@ def main(cfg):
             enable_semantics=False,
         )
     
-    position1 = Gf.Vec3d(0.05,0.05,0) # HERE PUT THE WANTED VALUE
+    position1 = Gf.Vec3d(0.08,0.08,0) # HERE PUT THE WANTED VALUE
     rotation1 = Gf.Vec3d(0,0,0)
     scale1 = Gf.Vec3d(1,1,1) 
     omni.kit.commands.execute("TransformMultiPrimsSRTCpp",
@@ -115,7 +115,7 @@ def main(cfg):
             time_code=0.0,
             )
 
-    position2 = Gf.Vec3d(-0.05,-0.05,0) # HERE PUT THE WANTED VALUE
+    position2 = Gf.Vec3d(-0.08,-0.08,0) # HERE PUT THE WANTED VALUE
     rotation2 = Gf.Vec3d(0,0,0)
     scale2 = Gf.Vec3d(1,1,1) 
     omni.kit.commands.execute("TransformMultiPrimsSRTCpp",
@@ -192,9 +192,9 @@ def main(cfg):
     direction_changes_completed = 0
     finish_CF = False
     Forward_counter = 0
-    ROOM_X_MIN, ROOM_X_MAX = -2.8 * 1.5, 2.8 * 1.5
-    ROOM_Y_MIN, ROOM_Y_MAX = -2.8 * 1.5, 2.8 * 1.5
-    
+    ROOM_X_MIN, ROOM_X_MAX = -2.8 * 1.33, 2.8 * 1.33
+    ROOM_Y_MIN, ROOM_Y_MAX = -2.8 * 1.33, 2.8 * 1.33
+    exit_point = None
 
     # 创建位置控制器
     controller = LeePositionController(g=9.81, uav_params=drone.params).to(sim.device)
@@ -267,7 +267,7 @@ def main(cfg):
             backward_world = transform_velocity(vel_backward, R_transpose)
             apply_control(drone, drone_state, controller, backward_world, "fly backward")
             backward_action_counter -= 1
-            if backward_action_counter == 0:
+            if depth1_noisy > 0.48 and depth2_noisy > 0.48 and backward_action_counter % 200 == 0:
                 laser_value1 = -1
                 laser_value2 = -1
                 depth1_noisy = depth1 + noise1
@@ -282,28 +282,42 @@ def main(cfg):
                 direction_change_counter = 0
                 direction_changes_completed += 1
             if direction_changes_completed >= 4 and finish_CF:
-                gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1,state_lasers2, laser_values1, laser_values2, curvature_threshold=-0.8)
+                gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1,state_lasers2, laser_values1, laser_values2, curvature_threshold=-0.6)
                 gpis.sample_data()
                 gpis.train_model()
                 gpis.predict()
-                next_point = gpis.find_max_uncertainty_point()
-                target_yaw = torch.tensor([np.arctan2(next_point[1] - state_y, next_point[0] - state_x)], device=sim.device) + 0.7853981
-                direction_change_counter = 500
-                gpis.plot_results(filename='gpis_results.png')
-                finish_CF = False
+                print(f"uncertainty percentage now is: {gpis.uncertainty_retained_percentage}%")
+                if gpis.uncertainty_retained_percentage < 25 and exit_point is not None:
+                    next_point = exit_point
+                    target_yaw = torch.tensor([np.arctan2(next_point[1] - state_y, next_point[0] - state_x)], device=sim.device) + 0.7853981
+                    direction_change_counter = 500
+                    gpis.plot_results(filename='gpis_results.png')
+                    finish_CF = False
+                    print("finish exploration and found the exit")
+                else: 
+                    next_point = gpis.find_max_uncertainty_point()
+                    target_yaw = torch.tensor([np.arctan2(next_point[1] - state_y, next_point[0] - state_x)], device=sim.device) + 0.7853981
+                    direction_change_counter = 500
+                    gpis.plot_results(filename='gpis_results.png')
+                    finish_CF = False
             print(torch.rad2deg(current_yaw + 0.7853981))
             print(torch.rad2deg(target_yaw))
 
         else:
             if MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
-                CF_action_counter = 150
+                CF_action_counter = 200
                 backward_action_counter = 250
                 direction_change_counter = 300
+                Forward_counter = 0
                 finish_CF = True
                 random_direction_rad = np.deg2rad(-90)
                 random_yaw = torch.tensor([random_direction_rad], device=sim.device)
                 print("CF start")
             else:
+                if depth1_noisy > 0.48 and depth2_noisy > 0.48 and Forward_counter % 200 == 0:
+                    laser_value1 = -1
+                    laser_value2 = -1
+                Forward_counter += 1
                 control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, 
                             vel_backward, vel_side, rot_z_45, controller, 
                             yaw_left, yaw_right,  MIN_THRESHOLD, MAX_THRESHOLD)
@@ -328,20 +342,35 @@ def main(cfg):
 
             # **检查无人机是否飞出房间**
         if state_x < ROOM_X_MIN or state_x > ROOM_X_MAX or state_y < ROOM_Y_MIN or state_y > ROOM_Y_MAX:
-            print(f"🚨 无人机超出房间范围 (x={state_x}, y={state_y})，任务结束！")
-            # **每轮循环都保存 CSV**
-            data = {
-                'state_xs': state_xs,
-                'state_ys': state_ys,
-                'state_yaws': state_yaws,
-                'state_lasers1': state_lasers1,
-                'state_lasers2': state_lasers2,
-                'laser_values1': laser_values1,
-                'laser_values2': laser_values2,
-            }
-            df = pd.DataFrame(data)
-            df.to_csv('T-0-ours_success.csv', index=False)  # **实时保存**
-            break  # 无人机飞出房间，结束任务
+            print(f"🚨 无人机超出房间范围 (x={state_x}, y={state_y})， 检查地图不确定性是否符合要求！")
+            gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1,state_lasers2, laser_values1, laser_values2, curvature_threshold=-0.6)
+            gpis.sample_data()
+            gpis.train_model()
+            gpis.predict()
+            print(f"uncertainty percentage now is: {gpis.uncertainty_retained_percentage}%")
+            if gpis.uncertainty_retained_percentage < 25:
+                # **每轮循环都保存 CSV**
+                data = {
+                    'state_xs': state_xs,
+                    'state_ys': state_ys,
+                    'state_yaws': state_yaws,
+                    'state_lasers1': state_lasers1,
+                    'state_lasers2': state_lasers2,
+                    'laser_values1': laser_values1,
+                    'laser_values2': laser_values2,
+                }
+                df = pd.DataFrame(data)
+                df.to_csv('T-0-ours_success.csv', index=False)  # **实时保存**
+                print("find the goal, mission complete")
+                break  # 无人机飞出房间，结束任务
+            else:
+                direction_change_counter = 600
+                random_direction_rad = np.deg2rad(-180)
+                random_yaw = torch.tensor([random_direction_rad], device=sim.device)
+                gpis.significant_points.append(next_point)
+                exit_point = next_point
+                print("exploration not yet complete, back to the room")
+
 
 
 

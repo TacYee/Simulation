@@ -102,7 +102,7 @@ class GPISModel:
         self.y_interior = -np.ones(len(self.x_inside))
         self.boundary_sample_ratio = boundary_sample_ratio
         self.interior_sample_ratio = interior_sample_ratio
-        self.kernel = kernel if kernel else InverseMultiquadricKernel(c=2.25)
+        self.kernel = kernel if kernel else InverseMultiquadricKernel(c=2)
         self.alpha = alpha
         self.curvature_threshold = curvature_threshold
         
@@ -113,10 +113,13 @@ class GPISModel:
         self.sigma = None
         self.contour_points = None
         self.penalized_uncertainty_grid = None
+        self.original_uncertainty_grid = None
+        self.significant_points = None
         self.contour_sigma_penalized = None
         self.max_uncertainty_point = None
         self.weights = None
         self.curvature = None
+        self.uncertainty_retained_percentage = None
     
     def sample_data(self):
         # 下采样边界点
@@ -140,14 +143,14 @@ class GPISModel:
         self.gp.fit(self.X_train, self.y_train)
     
     def predict(self):
-        x = np.linspace(-4.5, 4.5, 100)
-        y = np.linspace(-4.5, 4.5, 100)
+        x = np.linspace(-4, 4, 100)
+        y = np.linspace(-4, 4, 100)
         X, Y = np.meshgrid(x, y)
         X_test = np.vstack([X.ravel(), Y.ravel()]).T
         y_pred, sigma = self.gp.predict(X_test, return_std=True)
         self.Z = y_pred.reshape(X.shape)
         self.sigma = sigma.reshape(X.shape)
-        line_segments = self._marching_squares(100, self.Z.ravel(), self.sigma.ravel(), -4.5, 9/99, -4.5, 9/99)
+        line_segments = self._marching_squares(100, self.Z.ravel(), self.sigma.ravel(), -4, 8/99, -4, 8/99)
         contour_points_all = self._connect_contour_segments(line_segments, len(line_segments))
         x_vals = [point.x for point in contour_points_all]
         y_vals = [point.y for point in contour_points_all]
@@ -167,9 +170,10 @@ class GPISModel:
 
         original_uncertainty = sigma.ravel()
         penalized_uncertainty = original_uncertainty + penalty
-
+        self.original_uncertainty_grid = original_uncertainty.reshape(X.shape)
         self.penalized_uncertainty_grid = penalized_uncertainty.reshape(X.shape)
         self.contour_sigma_penalized = contour_sigma_interp + penalty_contour
+        self.uncertainty_retained_percentage = np.mean(self.original_uncertainty_grid) * 100
 
     class Point:
         def __init__(self, x, y, y_std):
@@ -426,8 +430,8 @@ class GPISModel:
         return self.max_uncertainty_point
     
     def plot_results(self, filename=None):
-        x = np.linspace(-4.5, 4.5, 100)
-        y = np.linspace(-4.5, 4.5, 100)
+        x = np.linspace(-4, 4, 100)
+        y = np.linspace(-4, 4, 100)
         X, Y = np.meshgrid(x, y)
 
         plt.figure(figsize=(14, 6))
