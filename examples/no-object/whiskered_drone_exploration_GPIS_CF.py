@@ -7,6 +7,7 @@ import omni
 import numpy as np
 from utlis import *
 from GPIS import GPISModel
+import matplotlib.pyplot as plt
 
 @hydra.main(version_base=None, config_path=".", config_name="demo")
 def main(cfg):
@@ -171,6 +172,8 @@ def main(cfg):
     depth1_noisy = 0
     depth2_noisy = 0
 
+    traj_index=9999999
+
     # Define the rotation quaternion for a -45 degree rotation around the Z-axis
     theta = -45.0  # degrees
     theta_rad = np.radians(theta)
@@ -195,6 +198,7 @@ def main(cfg):
     ROOM_X_MIN, ROOM_X_MAX = -2.8 * 1.33, 2.8 * 1.33
     ROOM_Y_MIN, ROOM_Y_MAX = -2.8 * 1.33, 2.8 * 1.33
     exit_point = None
+    trajectory = [] 
 
     # 创建位置控制器
     controller = LeePositionController(g=9.81, uav_params=drone.params).to(sim.device)
@@ -210,7 +214,7 @@ def main(cfg):
     drone_state = drone.get_state()[..., :13].squeeze(0)
 
     from tqdm import tqdm
-    for i in tqdm(range(15000)):
+    for i in tqdm(range(20000)):
         if sim.is_stopped():
             break
         if not sim.is_playing():
@@ -221,8 +225,8 @@ def main(cfg):
         depth2 = lidarInterface.get_linear_depth_data("/World" + lidarPath2)
 
         # 打印原始深度数据
-        print("Original depth1:", depth1)
-        print("Original depth2:", depth2)
+        # print("Original depth1:", depth1)
+        # print("Original depth2:", depth2)
 
         # 定义高斯噪声的均值和标准差
         mean = 0.0
@@ -237,10 +241,12 @@ def main(cfg):
         depth2_noisy = depth2 + noise2
 
         # 打印添加噪声后的深度数据
-        print("Noisy depth1:", depth1_noisy)
-        print("Noisy depth2:", depth2_noisy)
+        # print("Noisy depth1:", depth1_noisy)
+        # print("Noisy depth2:", depth2_noisy)
         #find the goal
-
+        state_x = drone.get_state()[..., 0].item()
+        state_y = drone.get_state()[..., 1].item()
+        state_z = drone.get_state()[..., 2].item()
         if goal_counter > 0:
             R_transpose, _ = process_quaternion(drone_state, rot_z_45)
             goal_world = transform_velocity(vel_side, R_transpose)
@@ -282,7 +288,7 @@ def main(cfg):
                 direction_change_counter = 0
                 direction_changes_completed += 1
             if direction_changes_completed >= 4 and finish_CF:
-                gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1,state_lasers2, laser_values1, laser_values2, curvature_threshold=-0.6)
+                gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1,state_lasers2, laser_values1, laser_values2, curvature_threshold=-0.7)
                 gpis.sample_data()
                 gpis.train_model()
                 gpis.predict()
@@ -300,19 +306,81 @@ def main(cfg):
                     direction_change_counter = 500
                     gpis.plot_results(filename='gpis_results.png')
                     finish_CF = False
-            print(torch.rad2deg(current_yaw + 0.7853981))
-            print(torch.rad2deg(target_yaw))
+                # Instantiate and plan using the new weighted RRT*
+                goal_yaw = gpis.compute_normal(next_point,gpis.weights,gpis.X_train,gpis.kernel)
+                uncertainty_grid=np.resize(gpis.penalized_uncertainty_grid, (100, 100))
+                optimizer = TrajectoryOptimizer(uncertainty_grid, lambda_align=0.2, lambda_smooth=0.8, n_control=5, steps=100)
+                trajectory = optimizer.optimize(np.array([state_x,state_y]), next_point, goal_yaw )
+                optimizer.visualize_trajectory(trajectory, np.array([state_x,state_y]), current_yaw, next_point, goal_yaw )
+                direction_change_counter = 0
+                traj_index = 0
+            # print(torch.rad2deg(current_yaw))
+            # print(torch.rad2deg(target_yaw))
+        elif traj_index < len(trajectory) - 1:
+            _, current_yaw = process_quaternion(drone_state, rot_z_45)
+            # 获取当前和下一个轨迹点
+            p1 = trajectory[traj_index]  # 当前轨迹点
+            p2 = trajectory[traj_index + 1]  # 下一个轨迹点
+            
+            
+            # 计算相邻两个轨迹点之间的方向向量
+            dir_vec = p2- p1 # 计算方向向量
+            dir_vec /= np.linalg.norm(dir_vec) + 1e-6  # 单位化方向向量
+            
+            # 使用方向向量计算航向（yaw）
+            yaw = np.arctan2(dir_vec[1], dir_vec[0])  # 使用 atan2 计算航向角度
+            
+            # 将目标位置和航向转换为 Tensor
+            ref_pos = torch.tensor([p1[0], p1[1], 1], dtype=torch.float32, device=sim.device)  # 当前轨迹点的位置作为目标位置
+            ref_yaw = torch.tensor([yaw], dtype=torch.float32, device=sim.device) + 0.7853981  # 计算得到的目标航向
+            current_yaw = torch.tensor(current_yaw, dtype=torch.float32, device=sim.device)
+            # 获取无人机当前位置
+            drone_pos = torch.tensor([state_x, state_y, state_z], dtype=torch.float32, device=sim.device)  # 假设无人机状态的前三个是位置
+            
+            # 计算当前位置和目标位置之间的欧几里得距离
+            distance = torch.norm(drone_pos - ref_pos)  # 计算欧几里得距离
 
+            # 计算航向差异，考虑角度的周期性（[-pi, pi]）
+            yaw_diff = torch.arctan2(torch.sin(ref_yaw - current_yaw), torch.cos(ref_yaw - current_yaw))
+            max_yaw_step = torch.tensor(np.pi / 6, device=sim.device)  # 每步最多旋转30°
+            yaw_step = torch.clamp(yaw_diff, -max_yaw_step, max_yaw_step)
+
+            # 计算本步调整后的目标朝向（不是最终ref_yaw，而是朝它靠近一步）
+            intermediate_yaw = current_yaw + yaw_step
+            # 控制器计算出动作（命令）
+            action = controller(drone_state, target_pos=ref_pos, target_yaw=intermediate_yaw)
+            drone.apply_action(action)
+            # print(f"ref pos: x={ref_pos[0]:.4f}, y={ref_pos[1]:.4f}, z={ref_pos[2]:.4f}")
+            # print(f"ref yaw: {ref_yaw.item():.4f}")
+            # print(f"current pos: x={drone_pos[0]:.4f}, y={drone_pos[1]:.4f}, z={drone_pos[2]:.4f}")
+            # print("current yaw: %.4f" % current_yaw )
+            # print("yaw diff: %.4f" % yaw_diff)
+            # print("ditance: %.4f" % distance)
+            # 如果距离小于阈值，切换到下一个轨迹点
+            if distance < 0.01 and torch.abs(yaw_diff) < np.deg2rad(2):
+                traj_index += 1  # 移动到下一个轨迹点
+                print(f"Arrived at waypoint {traj_index}, moving to next.")
+            if depth1_noisy > 0.48 and depth2_noisy > 0.48 and Forward_counter % 200 == 0:
+                laser_value1 = -1
+                laser_value2 = -1
+            Forward_counter += 1
+            if MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD or MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
+                CF_action_counter = 200
+                backward_action_counter = 150
+                direction_change_counter = 300
+                Forward_counter = 0
+                finish_CF = True
+                traj_index = 9999999
         else:
             if MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
                 CF_action_counter = 200
-                backward_action_counter = 250
+                backward_action_counter = 150
                 direction_change_counter = 300
                 Forward_counter = 0
                 finish_CF = True
                 random_direction_rad = np.deg2rad(-90)
                 random_yaw = torch.tensor([random_direction_rad], device=sim.device)
-                print("CF start")
+                # print("CF start")
             else:
                 if depth1_noisy > 0.48 and depth2_noisy > 0.48 and Forward_counter % 200 == 0:
                     laser_value1 = -1
@@ -324,10 +392,8 @@ def main(cfg):
         sim.step(render=(i % 10 == 0))
         # lidarInterface.update() 
         drone_state = drone.get_state()[..., :13].squeeze(0)
-        print(drone_state)
-        print(direction_changes_completed)
-        state_x = drone.get_state()[..., 0].item()
-        state_y = drone.get_state()[..., 1].item()
+        # print(drone_state)
+        # print(direction_changes_completed)
         state_xs.append(state_x)
         state_ys.append(state_y) 
         _ , state_yaw = process_quaternion(drone_state, rot_z_45)
@@ -343,7 +409,7 @@ def main(cfg):
             # **检查无人机是否飞出房间**
         if state_x < ROOM_X_MIN or state_x > ROOM_X_MAX or state_y < ROOM_Y_MIN or state_y > ROOM_Y_MAX:
             print(f"🚨 无人机超出房间范围 (x={state_x}, y={state_y})， 检查地图不确定性是否符合要求！")
-            gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1,state_lasers2, laser_values1, laser_values2, curvature_threshold=-0.6)
+            gpis = GPISModel(state_xs, state_ys, state_yaws, state_lasers1,state_lasers2, laser_values1, laser_values2, curvature_threshold=-0.7)
             gpis.sample_data()
             gpis.train_model()
             gpis.predict()
@@ -360,14 +426,14 @@ def main(cfg):
                     'laser_values2': laser_values2,
                 }
                 df = pd.DataFrame(data)
-                df.to_csv('T-0-ours_success.csv', index=False)  # **实时保存**
+                df.to_csv('T-90-ours_success.csv', index=False)  # **实时保存**
                 print("find the goal, mission complete")
                 break  # 无人机飞出房间，结束任务
             else:
                 direction_change_counter = 600
                 random_direction_rad = np.deg2rad(-180)
                 random_yaw = torch.tensor([random_direction_rad], device=sim.device)
-                gpis.significant_points.append(next_point)
+                gpis.significant_points=np.vstack([gpis.significant_points, next_point])
                 exit_point = next_point
                 print("exploration not yet complete, back to the room")
 
@@ -385,7 +451,7 @@ def main(cfg):
         'laser_values2': laser_values2,
     }
     df = pd.DataFrame(data)
-    df.to_csv('T-0-ours_fail.csv', index=False)
+    df.to_csv('T-90-ours_fail.csv', index=False)
 
     simulation_app.close()  # 仿真结束后关闭
 

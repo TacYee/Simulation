@@ -68,12 +68,10 @@ def transform_velocity(velocity, R_transpose):
 def apply_control(drone, drone_state, controller, target_vel, action_name):
     action = controller(drone_state, target_vel=target_vel)
     drone.apply_action(action)
-    print(f"{action_name}")
 
 def perform_attitude_control(drone, drone_state, controller, yaw, action_name):
     action = controller(drone_state, target_yaw=yaw)
     drone.apply_action(action)
-    print(f"{action_name}")
 
 def control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, vel_backward, vel_side, rot_z_45, controller, yaw_left, yaw_right, MIN_THRESHOLD, MAX_THRESHOLD, counter= 0):
     R_transpose, current_yaw = process_quaternion(drone_state, rot_z_45)
@@ -85,26 +83,18 @@ def control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, v
     elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy < MIN_THRESHOLD:
         target_yaw = current_yaw + yaw_right
         perform_attitude_control(drone, drone_state, controller, target_yaw, "turn right")
-        print(torch.rad2deg(current_yaw))
-        print(torch.rad2deg(target_yaw))
         counter -= 1
     elif MAX_THRESHOLD > depth1_noisy > MIN_THRESHOLD and depth2_noisy > MAX_THRESHOLD:
         target_yaw = current_yaw + yaw_left
         perform_attitude_control(drone, drone_state, controller, target_yaw, "turn left")
-        print(torch.rad2deg(current_yaw))
-        print(torch.rad2deg(target_yaw))
         counter -= 1
     elif depth1_noisy < MIN_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
         target_yaw = current_yaw + yaw_left
         perform_attitude_control(drone, drone_state, controller, target_yaw, "turn left")
-        print(torch.rad2deg(current_yaw))
-        print(torch.rad2deg(target_yaw))
         counter -= 1
     elif depth1_noisy > MAX_THRESHOLD and MAX_THRESHOLD > depth2_noisy > MIN_THRESHOLD:
         target_yaw = current_yaw + yaw_right
         perform_attitude_control(drone, drone_state, controller, target_yaw, "turn right")
-        print(torch.rad2deg(current_yaw))
-        print(torch.rad2deg(target_yaw))
         counter -= 1
     elif depth1_noisy > MAX_THRESHOLD and depth2_noisy > MAX_THRESHOLD:
         forward_world = transform_velocity(vel_forward, R_transpose)
@@ -156,3 +146,184 @@ def normalize_angle(rad):
     """ 将角度归一化到 -π 到 π 范围 """
     rad = (rad + np.pi) % (2 * np.pi) - np.pi
     return torch.rad2deg(rad)
+
+from scipy.optimize import minimize
+from scipy.interpolate import CubicSpline
+
+class TrajectoryOptimizer:
+    def __init__(self, uncertainty_grid, value_grid, 
+                 lambda_align=0.0, lambda_align_start = 0.0, lambda_smooth=0.0,
+                 n_control=7, steps=100, find_the_goal = False):
+        self.uncertainty_grid = uncertainty_grid
+        self.value_grid = value_grid
+        self.lambda_align = lambda_align
+        self.lambda_align_start = lambda_align_start
+        self.lambda_smooth = lambda_smooth   
+        self.n_control = n_control
+        self.steps = steps
+        self.find_the_goal = find_the_goal
+
+            
+    def ccw(self, a, b, c):
+        return (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x)
+
+    def segments_intersect(self, p1, p2, q1, q2):
+        return (self.ccw(p1, q1, q2) != self.ccw(p2, q1, q2)) and (self.ccw(p1, p2, q1) != self.ccw(p1, p2, q2))
+
+
+
+    def bilinear_uncertainty(self, x, grid):
+        h, w = grid.shape
+        x_img = (x[0] + 4) / 8 * (w - 1)
+        y_img = (x[1] + 4) / 8 * (h - 1)
+        x_img = np.clip(x_img, 0, w - 2)
+        y_img = np.clip(y_img, 0, h - 2)
+        x0, x1 = int(np.floor(x_img)), min(int(np.floor(x_img)) + 1, w - 1)
+        y0, y1 = int(np.floor(y_img)), min(int(np.floor(y_img)) + 1, h - 1)
+        dx, dy = x_img - x0, y_img - y0
+        q11, q21 = grid[y0, x0], grid[y0, x1]
+        q12, q22 = grid[y1, x0], grid[y1, x1]
+        return (q11 * (1 - dx) + q21 * dx) * (1 - dy) + (q12 * (1 - dx) + q22 * dx) * dy
+
+
+    def compute_trajectory(self, control_points):
+        t = np.linspace(0, 1, len(control_points))
+        cs_x = CubicSpline(t, control_points[:, 0])
+        cs_y = CubicSpline(t, control_points[:, 1])
+        t_dense = np.linspace(0, 1, self.steps)
+        return np.vstack((cs_x(t_dense), cs_y(t_dense))).T
+    
+    def to_numpy(self, x):
+        if isinstance(x, torch.Tensor):
+            return x.detach().cpu().numpy()
+        return x  # 已经是 numpy 的话直接返回
+
+    def optimize(self, x_start, v_start, x_target, theta):
+        n_target = np.array([np.cos(theta), np.sin(theta)])
+        v_start = np.array([np.cos(self.to_numpy(v_start)), np.sin(self.to_numpy(v_start))])
+        control_points = np.linspace(
+            self.to_numpy(x_start),
+            self.to_numpy(x_target),
+            self.n_control
+        )
+        x0 = control_points[1:-1].flatten()
+
+        def cost_fn(x_opt):
+            full_points = np.vstack([x_start, x_opt.reshape(-1, 2), x_target])
+            traj = self.compute_trajectory(full_points)
+
+            uncertainties = []
+            lengths = []
+            for i in range(len(traj) - 1):
+                mid = (traj[i] + traj[i + 1]) / 2
+                u = self.bilinear_uncertainty(mid,self.uncertainty_grid)
+                l = np.linalg.norm(traj[i + 1] - traj[i])
+                uncertainties.append(u * l)
+                lengths.append(l)
+
+            length_total = np.sum(lengths) + 1e-6
+            avg_uncertainty = np.sum(uncertainties) / length_total
+
+            # 终点方向对齐
+            end_dir = traj[-1] - traj[-2]
+            end_dir /= np.linalg.norm(end_dir) + 1e-6
+            start_dir = traj[1] - traj[0]
+            start_dir /= np.linalg.norm(start_dir) + 1e-6
+            align_term = 1 - np.dot(end_dir, n_target)
+            align_start = 1 - np.dot(start_dir, v_start)
+            # 方向平滑性惩罚项
+            smoothness_cost = 0
+            for i in range(1, len(traj) - 1):
+                v1 = traj[i] - traj[i - 1]
+                v2 = traj[i + 1] - traj[i]
+                if np.linalg.norm(v1) < 1e-6 or np.linalg.norm(v2) < 1e-6:
+                    continue
+                v1 /= np.linalg.norm(v1)
+                v2 /= np.linalg.norm(v2)
+                angle_diff = 1 - np.dot(v1, v2)  # 弯曲越大，惩罚越高
+                smoothness_cost += angle_diff
+
+            cost = (-avg_uncertainty +
+                    self.lambda_align * align_term +
+                    self.lambda_align_start * align_start+
+                    self.lambda_smooth * smoothness_cost)
+
+            # 轨迹穿越边界线段的惩罚
+            penalty = 0
+            for p in traj:
+                v = self.bilinear_uncertainty(p, self.value_grid)
+                if self.find_the_goal == True:
+                    if v > 0:
+                        penalty -= 100
+                    else:
+                        penalty += 100
+            cost += penalty
+
+            return cost + penalty
+
+        bounds = [(-4, 4)] * len(x0)
+        result = minimize(cost_fn, x0, method='L-BFGS-B', bounds=bounds,
+                          options={'maxiter': 1000, 'ftol': 1e-6})
+        print(result)
+
+        optimized_pts = np.vstack([x_start, result.x.reshape(-1, 2), x_target])
+        trajectory = self.compute_trajectory(optimized_pts)
+
+        avg_uncertainty = np.mean([self.bilinear_uncertainty(p,self.uncertainty_grid) for p in trajectory])
+        print(f"Average Uncertainty Along Trajectory: {avg_uncertainty:.4f}")
+
+        # 下采样
+        ds = 0.15
+        seg_lengths = np.linalg.norm(np.diff(trajectory, axis=0), axis=1)
+        s = np.concatenate([[0], np.cumsum(seg_lengths)])
+        total_length = s[-1]
+        n_samples = int(np.floor(total_length / ds))
+        s_sample = np.linspace(0, total_length, n_samples + 1)
+
+        x_sample = np.interp(s_sample, s, trajectory[:, 0])
+        y_sample = np.interp(s_sample, s, trajectory[:, 1])
+        trajectory = np.vstack([x_sample, y_sample]).T
+        return trajectory
+    
+    def visualize_trajectory(self, trajectory, x_start, theta_start, x_target, theta_target, arrow_step=10):
+        import matplotlib.pyplot as plt
+        theta_start = self.to_numpy(theta_start)
+        theta_target = self.to_numpy(theta_target)
+        v_start = np.array([np.cos(theta_start), np.sin(theta_start)])
+        n_target = np.array([np.cos(theta_target), np.sin(theta_target)])
+        plt.figure(figsize=(8, 8))
+        extent = [-4, 4, -4, 4]  # [xmin, xmax, ymin, ymax]
+        plt.imshow(self.uncertainty_grid, cmap='hot', origin='lower', alpha=0.6, extent=extent)
+        plt.plot(trajectory[:, 0], trajectory[:, 1], 'b-', linewidth=2, label='Optimized Trajectory')
+        plt.scatter(*x_start, c='green', label='Start')
+        plt.scatter(*x_target, c='red', label='Target')
+        x_start = np.array(x_start).flatten()
+        v_start = np.array([np.cos(theta_start), np.sin(theta_start)])
+        # 起点方向箭头
+            # 起点方向箭头
+        plt.arrow(float(x_start[0]), float(x_start[1]),# ✅ 加这个
+                float(v_start[0]) * 0.5, float(v_start[1]) * 0.5,
+                head_width=0.2, color='green', length_includes_head=True)
+
+        # 终点法向箭头
+        plt.arrow(float(x_target[0]), float(x_target[1]),
+                float(n_target[0]) * 0.5, float(n_target[1]) * 0.5,
+                head_width=0.2, color='red', length_includes_head=True)
+
+        # 在轨迹上绘制朝向箭头
+        for i in range(0, len(trajectory) - 1, arrow_step):
+            p1 = trajectory[i]
+            p2 = trajectory[i + 1]
+            dir_vec = p2 - p1
+            dir_vec /= np.linalg.norm(dir_vec) + 1e-6
+            plt.arrow(float(p1[0]), float(p1[1]),
+                    float(dir_vec[0]) * 0.5, float(dir_vec[1]) * 0.5,
+                    head_width=0.1, color='blue', alpha=0.7)
+        plt.xlim(-4, 4)
+        plt.ylim(-4, 4)
+        plt.legend()
+        plt.grid(True)
+        plt.title("Trajectory with Direction Arrows")
+        plt.xlabel("X")
+        plt.ylabel("Y")
+        plt.show()

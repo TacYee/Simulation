@@ -120,6 +120,7 @@ class GPISModel:
         self.weights = None
         self.curvature = None
         self.uncertainty_retained_percentage = None
+        self.contour_points_all = None
     
     def sample_data(self):
         # 下采样边界点
@@ -151,22 +152,22 @@ class GPISModel:
         self.Z = y_pred.reshape(X.shape)
         self.sigma = sigma.reshape(X.shape)
         line_segments = self._marching_squares(100, self.Z.ravel(), self.sigma.ravel(), -4, 8/99, -4, 8/99)
-        contour_points_all = self._connect_contour_segments(line_segments, len(line_segments))
-        x_vals = [point.x for point in contour_points_all]
-        y_vals = [point.y for point in contour_points_all]
+        self.contour_points_all = self._connect_contour_segments(line_segments, len(line_segments))
+        x_vals = [point.x for point in self.contour_points_all]
+        y_vals = [point.y for point in self.contour_points_all]
         self.contour_points = np.column_stack((x_vals, y_vals))
         self.weights = self.gp.K_inv.dot(self.y_train) 
         self.curvature = self._compute_curvature_kernel(self.contour_points, self.weights, self.X_train, self.kernel)
         print(f"curvatures: {self.curvature}")
         grid_points = np.vstack([X.ravel(), Y.ravel()]).T
 
-        contour_sigma_interp = [point.y_std for point in contour_points_all]
+        contour_sigma_interp = [point.y_std for point in self.contour_points_all]
 
         self.significant_points = self._find_high_curvature_clusters_using_curvature(self.contour_points, self.curvature, self.curvature_threshold)
         print(f"significant_points: {self.significant_points}")
         print(f"significant_points shape: {self.significant_points.shape}")
-        penalty = self._potential_function(grid_points, self.significant_points, c=0.2)
-        penalty_contour = self._potential_function(self.contour_points, self.significant_points, c=0.2)
+        penalty = self._potential_function(grid_points, self.significant_points, c=0.3)
+        penalty_contour = self._potential_function(self.contour_points, self.significant_points, c=0.3)
 
         original_uncertainty = sigma.ravel()
         penalized_uncertainty = original_uncertainty + penalty
@@ -423,6 +424,29 @@ class GPISModel:
 
         return np.array(curvatures)
     
+    def compute_normal(self, next_point, weights, X_train, kernel):
+        """
+        在核函数上直接计算 GPIS=0 等值线的曲率
+        :param X_test: 测试点集
+        :param contour_points: GPIS=0 的等值线点
+        :param weights: 高斯过程的权重
+        :param X_train: 训练点
+        :param kernel: 核函数实例
+        :return: 等值线点的曲率值
+        """
+        c2 = kernel.c**2
+        curvatures = []
+
+        # 计算距离和梯度
+        diffs = next_point - X_train
+        d2 = np.sum(diffs**2, axis=1)  # ||x - xi||^2
+        d2_c2 = d2 + c2
+
+        # 一阶导数 (gradient)
+        grad = np.sum(weights[:, None] * (-diffs / d2_c2[:, None]**(3 / 2)), axis=0)
+        horizontal_grad = grad[:2]  # 只使用 X 和 Y 分量计算 yaw
+        normal = np.arctan2(horizontal_grad[1], horizontal_grad[0])  # atan2 计算与水平面的角度
+        return normal
     
     def find_max_uncertainty_point(self):
         max_uncertainty_index = np.argmax(self.contour_sigma_penalized)
