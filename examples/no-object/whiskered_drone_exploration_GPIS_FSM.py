@@ -79,6 +79,16 @@ class DroneFSM:
             'laser_values1': [],
             'laser_values2': []
         }
+
+        self.data_records_temp = {
+            'state_xs': [],
+            'state_ys': [],
+            'state_yaws': [],
+            'state_lasers1': [],
+            'state_lasers2': [],
+            'laser_values1': [],
+            'laser_values2': []
+        }
         
         # 常量
         self.MIN_THRESHOLD = 0.4
@@ -137,15 +147,15 @@ class DroneFSM:
     
     def record_data(self, depth1, depth2):
         """记录数据"""
-        self.data_records['state_xs'].append(self.state_vars['state_x'])
-        self.data_records['state_ys'].append(self.state_vars['state_y'])
-        self.data_records['state_yaws'].append(self.state_vars['current_yaw'].item())
-        self.data_records['state_lasers1'].append(depth1.item())
-        self.data_records['state_lasers2'].append(depth2.item())
-        self.data_records['laser_values1'].append(self.state_vars['laser_value1'])
-        self.data_records['laser_values2'].append(self.state_vars['laser_value2'])
-        self.state_vars['laser_value1'] = 0
-        self.state_vars['laser_value2'] = 0
+        self.data_records_temp['state_xs'].append(self.state_vars['state_x'])
+        self.data_records_temp['state_ys'].append(self.state_vars['state_y'])
+        self.data_records_temp['state_yaws'].append(self.state_vars['current_yaw'].item())
+        self.data_records_temp['state_lasers1'].append(depth1.item())
+        self.data_records_temp['state_lasers2'].append(depth2.item())
+        self.data_records_temp['laser_values1'].append(self.state_vars['laser_value1'])
+        self.data_records_temp['laser_values2'].append(self.state_vars['laser_value2'])
+        self.state_vars['laser_value1'] = 2
+        self.state_vars['laser_value2'] = 2
     
     def check_room_boundary(self):
         """检查是否超出房间边界"""
@@ -155,22 +165,24 @@ class DroneFSM:
     
     def handle_boundary_violation(self, drone_state):
         """处理边界违规"""
+        self.data_records_temp = {k: [] for k in self.data_records_temp}
         print(f"🚨 无人机超出房间范围 (x={self.state_vars['state_x']}, y={self.state_vars['state_y']})，检查地图不确定性是否符合要求！")
         self.state_vars['outside'] = True
         gpis = GPISModel(
-            self.data_records['state_xs'][:-10], 
-            self.data_records['state_ys'][:-10], 
-            self.data_records['state_yaws'][:-10], 
-            self.data_records['state_lasers1'][:-10],
-            self.data_records['state_lasers2'][:-10], 
-            self.data_records['laser_values1'][:-10], 
-            self.data_records['laser_values2'][:-10], 
+            self.data_records['state_xs'], 
+            self.data_records['state_ys'], 
+            self.data_records['state_yaws'], 
+            self.data_records['state_lasers1'],
+            self.data_records['state_lasers2'], 
+            self.data_records['laser_values1'], 
+            self.data_records['laser_values2'], 
             curvature_threshold=-0.7
         )
         gpis.sample_data()
         gpis.train_model()
         gpis.predict()
-        
+        gpis.find_max_uncertainty_point()
+        gpis.plot_results(filename='gpis_results.png')
         print(f"uncertainty percentage now is: {gpis.uncertainty_retained_percentage}%")
         
         if gpis.uncertainty_retained_percentage < 25:
@@ -184,9 +196,10 @@ class DroneFSM:
                 uncertainty_grid,
                 value_grid, 
                 lambda_align=0, 
-                lambda_align_start=0.1,
-                lambda_smooth=0.1, 
-                n_control=5, 
+                lambda_align_start=0.5,
+                lambda_smooth=0.1,
+                lambda_v=100, 
+                n_control=3, 
                 steps=100,
                 find_the_goal=True
             )
@@ -210,16 +223,34 @@ class DroneFSM:
             self.state_vars['last_trajectory'] = True 
             self.transition_to(DroneState.EXIT)
         else:
-            self.state_vars['direction_change_counter'] = 600
-            random_direction_rad = np.deg2rad(-180)
-            self.state_vars['random_yaw'] = torch.tensor([random_direction_rad], device=self.sim.device)
-            _, self.state_vars['before_yaw'] = process_quaternion(drone_state, self.rot_z_45)
-            self.state_vars['target_yaw'] = self.state_vars['before_yaw'] + self.state_vars['random_yaw']
-            gpis.significant_points = np.vstack([gpis.significant_points, self.state_vars['next_point']])
-            self.state_vars['exit_point'] = self.state_vars['next_point']
-            self.state_vars['back'] = True 
-            print("exploration not yet complete, back to the room")
-            self.transition_to(DroneState.CHANGE_DIRECTION)
+            # 环境未探索完，使用之前生成的轨迹反向导航
+            if len(self.state_vars['trajectory']) > 0:
+                # 1. 找到当前状态距离轨迹最近的点
+                current_pos = np.array([self.state_vars['state_x'], self.state_vars['state_y']])
+                distances = [np.linalg.norm(current_pos - point) for point in self.state_vars['trajectory']]
+                closest_idx = np.argmin(distances)
+                
+                # 2. 只保留最近点之后的轨迹部分（反转前）
+                remaining_trajectory = self.state_vars['trajectory'][:closest_idx]
+                
+                # 3. 反转剩余轨迹
+                reversed_trajectory = remaining_trajectory[::-1]
+                self.state_vars['trajectory'] = reversed_trajectory
+                
+                self.state_vars['finish_CF'] = False
+                self.state_vars['traj_index'] = 0
+                self.state_vars['back'] = True
+                self.transition_to(DroneState.FOLLOW_TRAJECTORY)
+                if not self.state_vars['last_trajectory']:
+                    self.state_vars['outside'] = False
+                print("reverse traj")
+            else:
+                self.state_vars['back'] = True
+                _, self.state_vars['before_yaw'] = process_quaternion(drone_state, self.rot_z_45)
+                self.state_vars['target_yaw'] = self.state_vars['before_yaw'] + torch.pi
+                if not self.state_vars['last_trajectory']:
+                    self.state_vars['outside'] = False
+                self.transition_to(DroneState.CHANGE_DIRECTION)
     
     def save_data(self, filename):
         """保存数据到CSV"""
@@ -270,8 +301,9 @@ class DroneFSM:
                         self.state_vars['laser_value1'] = 1
                         self.state_vars['laser_value2'] = 1
                 else:
-                    self.state_vars['laser_value1'] = -1
-                    self.state_vars['laser_value2'] = -1
+                    if not self.state_vars.get('back'):
+                        self.state_vars['laser_value1'] = -1
+                        self.state_vars['laser_value2'] = -1
             self.state_vars['Forward_counter'] += 1
             self.state_vars['Forward_counter'] = control_drone(
                 self.drone, drone_state, depth1, depth2, 
@@ -291,14 +323,17 @@ class DroneFSM:
         self.state_vars['goal_counter'] -= 1
         if self.state_vars['goal_counter'] <= 0:
             self.transition_to(DroneState.IDLE)
+            self.state_vars['trajectory'] = []
     
     def state_cf_action(self, drone_state, depth1, depth2):
+        if len(self.data_records_temp['state_xs']) > 0:
+            for key in self.data_records:
+                self.data_records[key].extend(self.data_records_temp[key])
+        self.data_records_temp = {k: [] for k in self.data_records_temp}
         """CF动作状态"""
         self.state_vars['depth_last'] = self.state_vars['depth_now']
         self.state_vars['depth_now'] = depth2
         self.state_vars['back'] = False
-        if not self.state_vars['last_trajectory']:
-            self.state_vars['outside'] = False
         self.state_vars['CF_action_counter'] = control_drone(
             self.drone, drone_state, depth1, depth2, 
             self.cf_vel_forward, self.cf_vel_backward, 
@@ -308,11 +343,11 @@ class DroneFSM:
             self.state_vars['CF_action_counter']
         )
         residuals = self.state_vars['depth_now'] - self.state_vars['depth_last']
-        if depth1 < 0.48 and self.state_vars['CF_action_counter'] % 40 == 0:
-            self.state_vars['laser_value1'] = 1
-        if depth2 < 0.48 and self.state_vars['CF_action_counter'] % 40 == 0:
-            self.state_vars['laser_value2'] = 1
-        if residuals > 0.15:
+        if depth1 < 0.48 and self.state_vars['CF_action_counter'] % 40 == 0 and not self.state_vars['outside']:
+            self.state_vars['laser_value1'] = 0
+        if depth2 < 0.48 and self.state_vars['CF_action_counter'] % 40 == 0 and not self.state_vars['outside']:
+            self.state_vars['laser_value2'] = 0
+        if residuals > 0.05 and not self.state_vars['last_trajectory']:
             self.state_vars['goal_counter'] = 100
             self.state_vars['CF_action_counter'] = 0
             self.state_vars['backward_action_counter'] = 0
@@ -323,6 +358,9 @@ class DroneFSM:
         elif self.state_vars['CF_action_counter'] <= 0:
             self.transition_to(DroneState.BACKWARD)
             self.state_vars['finish_CF'] = True
+            self.state_vars['depth_now'] = 1
+        print(self.state_vars['depth_last'] )
+        print(self.state_vars['depth_now'] )
 
     
     def state_backward(self, drone_state, depth1, depth2):
@@ -379,7 +417,7 @@ class DroneFSM:
             self.state_vars['next_point'] = gpis.find_max_uncertainty_point()
             gpis.significant_points = np.vstack([gpis.significant_points, self.state_vars['next_point']])
             print("exploration not yet complete")    
-        gpis.plot_results(filename='gpis_results.png')
+            gpis.plot_results(filename='gpis_results.png')
         # 计算目标朝向
         
         # 轨迹规划
@@ -444,11 +482,15 @@ class DroneFSM:
             if distance < 0.01 and torch.abs(yaw_diff) < np.deg2rad(2):
                 self.state_vars['traj_index'] += 1
                 print(f"Arrived at waypoint {self.state_vars['traj_index']}, moving to next.")
-                if self.state_vars['traj_index'] == len(self.state_vars['trajectory']) - 1 and self.state_vars['last_trajectory']:
-                    self.transition_to(DroneState.LAND)
+                # 如果是返回轨迹且到达终点
+                if self.state_vars['back'] and self.state_vars['traj_index'] == len(self.state_vars['trajectory']) - 1:
+                    self.state_vars['back'] = False
+                    self.transition_to(DroneState.IDLE)
+            
             if depth1 > 0.48 and depth2 > 0.48 and self.state_vars['Forward_counter'] % 200 == 0:
-                self.state_vars['laser_value1'] = -1
-                self.state_vars['laser_value2'] = -1
+                if not self.state_vars.get('back'):
+                    self.state_vars['laser_value1'] = -1
+                    self.state_vars['laser_value2'] = -1
             
             self.state_vars['Forward_counter'] += 1
             
@@ -456,8 +498,10 @@ class DroneFSM:
                 self.MIN_THRESHOLD < depth2 < self.MAX_THRESHOLD):
                 self.reset_to_cf_action()
         else:
-            self.transition_to(DroneState.IDLE)
-    
+            # 如果不是返回轨迹，则转回IDLE状态
+            if not self.state_vars['back']:
+                self.transition_to(DroneState.IDLE)
+        
     def reset_to_cf_action(self):
         """重置到CF动作状态"""
         self.state_vars['CF_action_counter'] = 200
@@ -587,7 +631,7 @@ def main(cfg):
     sim.reset()
     drone.initialize()
 
-    end_point = np.array([3.5, -3.5])  # 示例终点坐标
+    end_point = np.array([0, -3.5])  # 示例终点坐标
 
     # 创建状态机实例
     drone_fsm = DroneFSM(cfg, sim, drone, lidarInterface, lidarPath1, lidarPath2, end_point=end_point)

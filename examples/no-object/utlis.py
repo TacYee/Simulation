@@ -153,12 +153,15 @@ from scipy.interpolate import CubicSpline
 class TrajectoryOptimizer:
     def __init__(self, uncertainty_grid, value_grid, 
                  lambda_align=0.0, lambda_align_start = 0.0, lambda_smooth=0.0,
+                 lambda_u = 1.0, lambda_v = 0.0,
                  n_control=7, steps=100, find_the_goal = False):
         self.uncertainty_grid = uncertainty_grid
         self.value_grid = value_grid
         self.lambda_align = lambda_align
         self.lambda_align_start = lambda_align_start
         self.lambda_smooth = lambda_smooth   
+        self.lambda_u = lambda_u  
+        self.lambda_v = lambda_v  
         self.n_control = n_control
         self.steps = steps
         self.find_the_goal = find_the_goal
@@ -243,7 +246,7 @@ class TrajectoryOptimizer:
                 angle_diff = 1 - np.dot(v1, v2)  # 弯曲越大，惩罚越高
                 smoothness_cost += angle_diff
 
-            cost = (-avg_uncertainty +
+            cost = (- self.lambda_u * avg_uncertainty +
                     self.lambda_align * align_term +
                     self.lambda_align_start * align_start+
                     self.lambda_smooth * smoothness_cost)
@@ -254,14 +257,19 @@ class TrajectoryOptimizer:
                 v = self.bilinear_uncertainty(p, self.value_grid)
                 if self.find_the_goal == True:
                     if v > 0:
-                        penalty -= 100
+                        penalty -= self.lambda_v * v
                     else:
-                        penalty += 100
+                        penalty -= self.lambda_v * v
+                else:
+                    if v > 0:
+                        penalty += self.lambda_v * v
+                    else:
+                        penalty += self.lambda_v * v
             cost += penalty
 
             return cost + penalty
 
-        bounds = [(-4, 4)] * len(x0)
+        bounds = [(-4.5, 4.5)] * len(x0)
         result = minimize(cost_fn, x0, method='L-BFGS-B', bounds=bounds,
                           options={'maxiter': 1000, 'ftol': 1e-6})
         print(result)

@@ -52,7 +52,7 @@ class GaussianProcessRegressor:
 
 class GPISModel:
     def __init__(self, x, y, yaw, laser1, laser2, value1, value2,
-                boundary_sample_ratio=1, interior_sample_ratio=1, 
+                boundary_sample_ratio=1, interior_sample_ratio=1, outerior_sample_ratio=1,
                 kernel=None, alpha=1e-2, curvature_threshold=-1):
         x = np.array(x)
         y = np.array(y)
@@ -63,10 +63,12 @@ class GPISModel:
         value2 = np.array(value2)
 
         # **确定墙壁和内部的点**
-        self.x_wall = x[(value1 == 1) | (value2 == 1)]
-        self.y_wall = y[(value1 == 1) | (value2 == 1)]
+        self.x_wall = x[(value1 == 0) | (value2 == 0)]
+        self.y_wall = y[(value1 == 0) | (value2 == 0)]
         self.x_inside = x[(value1 == -1) | (value2 == -1)]
         self.y_inside = y[(value1 == -1) | (value2 == -1)]
+        self.x_outside = x[(value1 == 1) | (value2 == 1)]
+        self.y_outside = y[(value1 == 1) | (value2 == 1)]
 
         # **计算 laser 的 X、Y 坐标**
         laser1x = laser1 * np.cos(yaw - 0.7853981)
@@ -83,10 +85,12 @@ class GPISModel:
                                 np.where(value2 == 1, laser2y, 0)))
 
         # **区分墙壁点和内部点**
-        self.laser1x_wall = laserx[(value1 == 1) | (value2 == 1)]
-        self.laser1y_wall = lasery[(value1 == 1) | (value2 == 1)]
+        self.laser1x_wall = laserx[(value1 == 0) | (value2 == 0)]
+        self.laser1y_wall = lasery[(value1 == 0) | (value2 == 0)]
         self.laser1x_inside = laserx[(value1 == -1) | (value2 == -1)]
         self.laser1y_inside = lasery[(value1 == -1) | (value2 == -1)]
+        self.laser1x_outside = laserx[(value1 == 1) | (value2 == 1)]
+        self.laser1y_outside = lasery[(value1 == 1) | (value2 == 1)]
         print(value1)
 
         print(f"x_wall size: {self.x_wall.size}")
@@ -100,8 +104,11 @@ class GPISModel:
         self.y_boundary = np.zeros(len(self.x_wall))
         self.X_interior = np.vstack([self.x_inside + self.laser1x_inside, self.y_inside + self.laser1y_inside]).T
         self.y_interior = -np.ones(len(self.x_inside))
+        self.X_outerior = np.vstack([self.x_outside + self.laser1x_outside, self.y_outside + self.laser1y_outside]).T
+        self.y_outerior = np.ones(len(self.x_outside))
         self.boundary_sample_ratio = boundary_sample_ratio
         self.interior_sample_ratio = interior_sample_ratio
+        self.outerior_sample_ratio = outerior_sample_ratio
         self.kernel = kernel if kernel else InverseMultiquadricKernel(c=2)
         self.alpha = alpha
         self.curvature_threshold = curvature_threshold
@@ -135,9 +142,14 @@ class GPISModel:
         X_interior_sampled = self.X_interior[interior_indices]
         y_interior_sampled = self.y_interior[interior_indices]
 
+        num_outerior_samples = int(len(self.X_outerior) * self.outerior_sample_ratio)
+        outerior_indices = np.random.choice(len(self.X_outerior), num_outerior_samples, replace=False)
+        X_outerior_sampled = self.X_outerior[outerior_indices]
+        y_outerior_sampled = self.y_outerior[outerior_indices]
+
         # 合并下采样后的数据
-        self.X_train = np.vstack([X_boundary_sampled, X_interior_sampled])
-        self.y_train = np.concatenate([y_boundary_sampled, y_interior_sampled])
+        self.X_train = np.vstack([X_boundary_sampled, X_interior_sampled, X_outerior_sampled])
+        self.y_train = np.concatenate([y_boundary_sampled, y_interior_sampled, y_outerior_sampled])
     
     def train_model(self):
         self.gp = GaussianProcessRegressor(kernel=self.kernel, alpha=self.alpha)
@@ -464,7 +476,7 @@ class GPISModel:
         plt.subplot(1, 2, 1)
         plt.contourf(X, Y, self.Z, levels=np.linspace(self.Z.min(), self.Z.max(), 100), cmap="viridis")
         plt.colorbar(label='GPIS Value')
-        plt.scatter(self.X_train[:, 0], self.X_train[:, 1], c=self.y_train, cmap="coolwarm", edgecolor="k", s=3)
+        plt.scatter(self.X_train[:, 0], self.X_train[:, 1], c=self.y_train, cmap="coolwarm", edgecolor="none", s=10)
         plt.scatter(self.max_uncertainty_point[0], self.max_uncertainty_point[1], color='red', s=100, edgecolor='black', label='Max Uncertainty Point')
         plt.contour(X, Y, self.Z, levels=[0], colors='red')
         plt.scatter(self.significant_points[:, 0], self.significant_points[:, 1], c='white', s=30, label='Significant Curvature Points')
@@ -476,7 +488,7 @@ class GPISModel:
         plt.subplot(1, 2, 2)
         plt.contourf(X, Y, self.penalized_uncertainty_grid, levels=np.linspace(self.penalized_uncertainty_grid.min(), self.penalized_uncertainty_grid.max(), 100), cmap="viridis")
         plt.colorbar(label='Penalized Uncertainty (Std)')
-        plt.scatter(self.X_train[:, 0], self.X_train[:, 1], c=self.y_train, cmap="coolwarm", edgecolor="k", s=3)
+        plt.scatter(self.X_train[:, 0], self.X_train[:, 1], c=self.y_train, cmap="coolwarm", edgecolor="none", s=10)
         plt.title("Uncertainty (Std) with Penalty")
         plt.xlabel("X")
         plt.ylabel("Y")
