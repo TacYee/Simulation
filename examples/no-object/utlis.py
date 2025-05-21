@@ -150,30 +150,28 @@ def normalize_angle(rad):
 from scipy.optimize import minimize
 from scipy.interpolate import CubicSpline
 
+import numpy as np
+from scipy.optimize import minimize, NonlinearConstraint
+from scipy.interpolate import CubicSpline
+import torch
+
 class TrajectoryOptimizer:
     def __init__(self, uncertainty_grid, value_grid, 
-                 lambda_align=0.0, lambda_align_start = 0.0, lambda_smooth=0.0,
-                 lambda_u = 1.0, lambda_v = 0.0,
-                 n_control=7, steps=100, find_the_goal = False):
+                 lambda_align=0.0, lambda_align_start=0.0, lambda_smooth=0.0,
+                 lambda_u=1.0, lambda_v=0.0,
+                 n_control=7, steps=100, find_the_goal=False,
+                 v_max=0.0):
         self.uncertainty_grid = uncertainty_grid
         self.value_grid = value_grid
         self.lambda_align = lambda_align
         self.lambda_align_start = lambda_align_start
-        self.lambda_smooth = lambda_smooth   
-        self.lambda_u = lambda_u  
-        self.lambda_v = lambda_v  
+        self.lambda_smooth = lambda_smooth
+        self.lambda_u = lambda_u
+        self.lambda_v = lambda_v
         self.n_control = n_control
         self.steps = steps
         self.find_the_goal = find_the_goal
-
-            
-    def ccw(self, a, b, c):
-        return (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x)
-
-    def segments_intersect(self, p1, p2, q1, q2):
-        return (self.ccw(p1, q1, q2) != self.ccw(p2, q1, q2)) and (self.ccw(p1, p2, q1) != self.ccw(p1, p2, q2))
-
-
+        self.v_max = v_max  # 新增最大允许 value 值作为硬约束
 
     def bilinear_uncertainty(self, x, grid):
         h, w = grid.shape
@@ -188,18 +186,17 @@ class TrajectoryOptimizer:
         q12, q22 = grid[y1, x0], grid[y1, x1]
         return (q11 * (1 - dx) + q21 * dx) * (1 - dy) + (q12 * (1 - dx) + q22 * dx) * dy
 
-
     def compute_trajectory(self, control_points):
         t = np.linspace(0, 1, len(control_points))
         cs_x = CubicSpline(t, control_points[:, 0])
         cs_y = CubicSpline(t, control_points[:, 1])
         t_dense = np.linspace(0, 1, self.steps)
         return np.vstack((cs_x(t_dense), cs_y(t_dense))).T
-    
+
     def to_numpy(self, x):
         if isinstance(x, torch.Tensor):
             return x.detach().cpu().numpy()
-        return x  # 已经是 numpy 的话直接返回
+        return x
 
     def optimize(self, x_start, v_start, x_target, theta):
         n_target = np.array([np.cos(theta), np.sin(theta)])
@@ -219,7 +216,7 @@ class TrajectoryOptimizer:
             lengths = []
             for i in range(len(traj) - 1):
                 mid = (traj[i] + traj[i + 1]) / 2
-                u = self.bilinear_uncertainty(mid,self.uncertainty_grid)
+                u = self.bilinear_uncertainty(mid, self.uncertainty_grid)
                 l = np.linalg.norm(traj[i + 1] - traj[i])
                 uncertainties.append(u * l)
                 lengths.append(l)
@@ -227,14 +224,13 @@ class TrajectoryOptimizer:
             length_total = np.sum(lengths) + 1e-6
             avg_uncertainty = np.sum(uncertainties) / length_total
 
-            # 终点方向对齐
             end_dir = traj[-1] - traj[-2]
             end_dir /= np.linalg.norm(end_dir) + 1e-6
             start_dir = traj[1] - traj[0]
             start_dir /= np.linalg.norm(start_dir) + 1e-6
             align_term = 1 - np.dot(end_dir, n_target)
             align_start = 1 - np.dot(start_dir, v_start)
-            # 方向平滑性惩罚项
+
             smoothness_cost = 0
             for i in range(1, len(traj) - 1):
                 v1 = traj[i] - traj[i - 1]
@@ -243,44 +239,55 @@ class TrajectoryOptimizer:
                     continue
                 v1 /= np.linalg.norm(v1)
                 v2 /= np.linalg.norm(v2)
-                angle_diff = 1 - np.dot(v1, v2)  # 弯曲越大，惩罚越高
+                angle_diff = 1 - np.dot(v1, v2)
                 smoothness_cost += angle_diff
 
             cost = (- self.lambda_u * avg_uncertainty +
                     self.lambda_align * align_term +
-                    self.lambda_align_start * align_start+
+                    self.lambda_align_start * align_start +
                     self.lambda_smooth * smoothness_cost)
-
-            # 轨迹穿越边界线段的惩罚
+            
             penalty = 0
-            for p in traj:
-                v = self.bilinear_uncertainty(p, self.value_grid)
-                if self.find_the_goal == True:
+            if self.find_the_goal == True:
+                for p in traj:
+                    v = self.bilinear_uncertainty(p, self.value_grid)
                     if v > 0:
                         penalty -= self.lambda_v * v
                     else:
                         penalty -= self.lambda_v * v
-                else:
-                    if v > 0:
-                        penalty += self.lambda_v * v
-                    else:
-                        penalty += self.lambda_v * v
             cost += penalty
 
-            return cost + penalty
+            return cost
+
+        def constraint_fn(x_opt):
+            full_points = np.vstack([x_start,
+                                    x_opt.reshape(-1, 2),
+                                    x_target])
+            traj = self.compute_trajectory(full_points)
+            values = np.array([self.bilinear_uncertainty(p, self.value_grid) for p in traj])
+
+            if self.find_the_goal:
+                # v 必须都 > 0，即 values - epsilon >= 0
+                return values - 0.1
+            else:
+                # v 必须都 < 0，即 -(values + epsilon) >= 0
+                return -(values - 0.1)
+
+        nonlinear_constraint = NonlinearConstraint(constraint_fn, 0, np.inf)
 
         bounds = [(-4.5, 4.5)] * len(x0)
-        result = minimize(cost_fn, x0, method='L-BFGS-B', bounds=bounds,
-                          options={'maxiter': 1000, 'ftol': 1e-6})
+        result = minimize(cost_fn, x0, method='SLSQP', bounds=bounds,
+                          constraints=[nonlinear_constraint],
+                          options={'maxiter': 100, 'ftol': 1e-6, 'disp': True})
         print(result)
 
         optimized_pts = np.vstack([x_start, result.x.reshape(-1, 2), x_target])
         trajectory = self.compute_trajectory(optimized_pts)
 
-        avg_uncertainty = np.mean([self.bilinear_uncertainty(p,self.uncertainty_grid) for p in trajectory])
+        avg_uncertainty = np.mean([self.bilinear_uncertainty(p, self.uncertainty_grid) for p in trajectory])
         print(f"Average Uncertainty Along Trajectory: {avg_uncertainty:.4f}")
 
-        # 下采样
+        # Downsample
         ds = 0.15
         seg_lengths = np.linalg.norm(np.diff(trajectory, axis=0), axis=1)
         s = np.concatenate([[0], np.cumsum(seg_lengths)])
@@ -291,7 +298,9 @@ class TrajectoryOptimizer:
         x_sample = np.interp(s_sample, s, trajectory[:, 0])
         y_sample = np.interp(s_sample, s, trajectory[:, 1])
         trajectory = np.vstack([x_sample, y_sample]).T
+
         return trajectory
+
     
     def visualize_trajectory(self, trajectory, x_start, theta_start, x_target, theta_target, arrow_step=10):
         import matplotlib.pyplot as plt

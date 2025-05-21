@@ -53,7 +53,7 @@ class GaussianProcessRegressor:
 class GPISModel:
     def __init__(self, x, y, yaw, laser1, laser2, value1, value2,
                 boundary_sample_ratio=1, interior_sample_ratio=1, outerior_sample_ratio=1,
-                kernel=None, alpha=1e-2, curvature_threshold=-1):
+                kernel=None, alpha=1e-2, curvature_threshold=-1, exit_point = None):
         x = np.array(x)
         y = np.array(y)
         yaw = np.array(yaw)
@@ -122,6 +122,7 @@ class GPISModel:
         self.penalized_uncertainty_grid = None
         self.original_uncertainty_grid = None
         self.significant_points = None
+        self.exit_point = exit_point
         self.contour_sigma_penalized = None
         self.max_uncertainty_point = None
         self.weights = None
@@ -176,6 +177,9 @@ class GPISModel:
         contour_sigma_interp = [point.y_std for point in self.contour_points_all]
 
         self.significant_points = self._find_high_curvature_clusters_using_curvature(self.contour_points, self.curvature, self.curvature_threshold)
+        if self.exit_point:
+            self.significant_points = np.vstack([self.significant_points, self.exit_point])
+            print(f"exit_points: {self.exit_point}")
         print(f"significant_points: {self.significant_points}")
         print(f"significant_points shape: {self.significant_points.shape}")
         penalty = self._potential_function(grid_points, self.significant_points, c=0.3)
@@ -480,6 +484,8 @@ class GPISModel:
         plt.scatter(self.max_uncertainty_point[0], self.max_uncertainty_point[1], color='red', s=100, edgecolor='black', label='Max Uncertainty Point')
         plt.contour(X, Y, self.Z, levels=[0], colors='red')
         plt.scatter(self.significant_points[:, 0], self.significant_points[:, 1], c='white', s=30, label='Significant Curvature Points')
+        if self.exit_point:
+            plt.scatter(self.exit_point[0], self.exit_point[1], c='gray', s=30, label='Exit Points')
         plt.title("2D GPIS with RBF Kernel")
         plt.xlabel("X")
         plt.ylabel("Y")

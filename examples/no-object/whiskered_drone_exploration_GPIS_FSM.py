@@ -93,8 +93,8 @@ class DroneFSM:
         # 常量
         self.MIN_THRESHOLD = 0.4
         self.MAX_THRESHOLD = 0.45
-        self.ROOM_X_MIN, self.ROOM_X_MAX = -2.8 * 1.33, 2.8 * 1.33
-        self.ROOM_Y_MIN, self.ROOM_Y_MAX = -2.8 * 1.33, 2.8 * 1.33
+        self.ROOM_X_MIN, self.ROOM_X_MAX = -4, 4
+        self.ROOM_Y_MIN, self.ROOM_Y_MAX = -4, 4
         
         # 速度向量
         self.vel_forward = torch.tensor([0.2, 0.0, 0.0], device=sim.device)
@@ -176,7 +176,8 @@ class DroneFSM:
             self.data_records['state_lasers2'], 
             self.data_records['laser_values1'], 
             self.data_records['laser_values2'], 
-            curvature_threshold=-0.7
+            curvature_threshold=-0.7,
+            exit_point = self.state_vars['exit_point']
         )
         gpis.sample_data()
         gpis.train_model()
@@ -185,7 +186,7 @@ class DroneFSM:
         gpis.plot_results(filename='gpis_results.png')
         print(f"uncertainty percentage now is: {gpis.uncertainty_retained_percentage}%")
         
-        if gpis.uncertainty_retained_percentage < 25:
+        if gpis.uncertainty_retained_percentage < 26:
             # 使用预先设置的end_point作为目标点
             target_point = self.state_vars['end_point'] if self.state_vars['end_point'] is not None \
                           else self.state_vars['next_point']
@@ -196,10 +197,10 @@ class DroneFSM:
                 uncertainty_grid,
                 value_grid, 
                 lambda_align=0, 
-                lambda_align_start=0.5,
+                lambda_align_start=0,
                 lambda_smooth=0.1,
                 lambda_v=100, 
-                n_control=3, 
+                n_control=4, 
                 steps=100,
                 find_the_goal=True
             )
@@ -223,6 +224,8 @@ class DroneFSM:
             self.state_vars['last_trajectory'] = True 
             self.transition_to(DroneState.EXIT)
         else:
+            self.state_vars['exit_point'] = self.state_vars['next_point']
+            gpis.exit_point = self.state_vars['exit_point'] 
             # 环境未探索完，使用之前生成的轨迹反向导航
             if len(self.state_vars['trajectory']) > 0:
                 # 1. 找到当前状态距离轨迹最近的点
@@ -348,7 +351,7 @@ class DroneFSM:
         if depth2 < 0.48 and self.state_vars['CF_action_counter'] % 40 == 0 and not self.state_vars['outside']:
             self.state_vars['laser_value2'] = 0
         if residuals > 0.05 and not self.state_vars['last_trajectory']:
-            self.state_vars['goal_counter'] = 100
+            self.state_vars['goal_counter'] = 150
             self.state_vars['CF_action_counter'] = 0
             self.state_vars['backward_action_counter'] = 0
             self.state_vars['direction_change_counter'] = 0
@@ -359,8 +362,8 @@ class DroneFSM:
             self.transition_to(DroneState.BACKWARD)
             self.state_vars['finish_CF'] = True
             self.state_vars['depth_now'] = 1
-        print(self.state_vars['depth_last'] )
-        print(self.state_vars['depth_now'] )
+        # print(self.state_vars['depth_last'] )
+        # print(self.state_vars['depth_now'] )
 
     
     def state_backward(self, drone_state, depth1, depth2):
@@ -370,7 +373,7 @@ class DroneFSM:
         apply_control(self.drone, drone_state, self.controller, backward_world, "fly backward")
         
         self.state_vars['backward_action_counter'] -= 1
-        if depth1 > 0.48 and depth2 > 0.48 and self.state_vars['backward_action_counter'] % 200 == 0:
+        if depth1 > 0.48 and depth2 > 0.48 and self.state_vars['backward_action_counter'] % 200 == 0 and not self.state_vars['outside']:
             self.state_vars['laser_value1'] = -1
             self.state_vars['laser_value2'] = -1
             _, self.state_vars['before_yaw'] = process_quaternion(drone_state, self.rot_z_45)
@@ -379,8 +382,12 @@ class DroneFSM:
         if self.state_vars['backward_action_counter'] <= 0 and self.state_vars['direction_changes_completed'] < 3:
             self.transition_to(DroneState.CHANGE_DIRECTION)
         elif self.state_vars['backward_action_counter'] <= 0 and self.state_vars['direction_changes_completed'] >= 3 and self.state_vars['finish_CF']:
-            self.handle_gpis_analysis()
-            self.transition_to(DroneState.FOLLOW_TRAJECTORY)
+            if self.state_vars['outside']:
+                self.handle_boundary_violation(drone_state)
+                self.transition_to(DroneState.FOLLOW_TRAJECTORY)
+            else:
+                self.handle_gpis_analysis()
+                self.transition_to(DroneState.FOLLOW_TRAJECTORY)
     
     def state_change_direction(self, drone_state):
         """改变方向状态"""
@@ -404,18 +411,19 @@ class DroneFSM:
             self.data_records['state_lasers2'], 
             self.data_records['laser_values1'], 
             self.data_records['laser_values2'], 
-            curvature_threshold=-0.7
+            curvature_threshold=-0.7,
+            exit_point = self.state_vars['exit_point']
         )
         gpis.sample_data()
         gpis.train_model()
         gpis.predict()
         print(f"uncertainty percentage now is: {gpis.uncertainty_retained_percentage}%")
-        if gpis.uncertainty_retained_percentage < 25 and self.state_vars['exit_point'] is not None:
+        if gpis.uncertainty_retained_percentage < 26 and self.state_vars['exit_point'] is not None:
             self.state_vars['next_point'] = self.state_vars['exit_point']
+            gpis.plot_results(filename='gpis_results.png')
             print("finish exploration and found the exit")
         else:
             self.state_vars['next_point'] = gpis.find_max_uncertainty_point()
-            gpis.significant_points = np.vstack([gpis.significant_points, self.state_vars['next_point']])
             print("exploration not yet complete")    
             gpis.plot_results(filename='gpis_results.png')
         # 计算目标朝向
@@ -462,6 +470,7 @@ class DroneFSM:
             dir_vec /= np.linalg.norm(dir_vec) + 1e-6
             yaw = np.arctan2(dir_vec[1], dir_vec[0])
             
+            # 目标位置和角度
             ref_pos = torch.tensor([p1[0], p1[1], 1], dtype=torch.float32, device=self.sim.device)
             ref_yaw = torch.tensor([yaw], dtype=torch.float32, device=self.sim.device) + 0.7853981
             current_yaw = torch.tensor(self.state_vars['current_yaw'], dtype=torch.float32, device=self.sim.device)
@@ -469,34 +478,52 @@ class DroneFSM:
                 [self.state_vars['state_x'], self.state_vars['state_y'], self.state_vars['state_z']], 
                 dtype=torch.float32, device=self.sim.device
             )
-            
-            distance = torch.norm(drone_pos - ref_pos)
+
+            # Yaw step clamp
             yaw_diff = torch.arctan2(torch.sin(ref_yaw - current_yaw), torch.cos(ref_yaw - current_yaw))
             max_yaw_step = torch.tensor(np.pi / 6, device=self.sim.device)
             yaw_step = torch.clamp(yaw_diff, -max_yaw_step, max_yaw_step)
             intermediate_yaw = current_yaw + yaw_step
-            
-            action = self.controller(drone_state, target_pos=ref_pos, target_yaw=intermediate_yaw)
+
+            # Position step clamp
+            pos_diff = ref_pos - drone_pos
+            max_pos_step = torch.tensor(0.1, device=self.sim.device)  # 可调整最大步长
+            pos_distance = torch.norm(pos_diff)
+            if pos_distance > max_pos_step:
+                pos_step = pos_diff / (pos_distance + 1e-6) * max_pos_step
+                intermediate_pos = drone_pos + pos_step
+            else:
+                intermediate_pos = ref_pos
+
+            # 控制指令
+            action = self.controller(drone_state, target_pos=intermediate_pos, target_yaw=intermediate_yaw)
             self.drone.apply_action(action)
+
             
-            if distance < 0.01 and torch.abs(yaw_diff) < np.deg2rad(2):
+            if pos_distance < 0.01 and torch.abs(yaw_diff) < np.deg2rad(2):
                 self.state_vars['traj_index'] += 1
                 print(f"Arrived at waypoint {self.state_vars['traj_index']}, moving to next.")
                 # 如果是返回轨迹且到达终点
                 if self.state_vars['back'] and self.state_vars['traj_index'] == len(self.state_vars['trajectory']) - 1:
                     self.state_vars['back'] = False
                     self.transition_to(DroneState.IDLE)
+                elif self.state_vars['outside'] and self.state_vars['traj_index'] == len(self.state_vars['trajectory']) - 1:
+                    self.transition_to(DroneState.LAND)
             
             if depth1 > 0.48 and depth2 > 0.48 and self.state_vars['Forward_counter'] % 200 == 0:
-                if not self.state_vars.get('back'):
+                if self.state_vars['outside'] and not self.state_vars.get('back'):
+                    self.state_vars['laser_value1'] = 1
+                    self.state_vars['laser_value2'] = 1
+                if not self.state_vars['outside'] and not self.state_vars.get('back'):
                     self.state_vars['laser_value1'] = -1
                     self.state_vars['laser_value2'] = -1
             
             self.state_vars['Forward_counter'] += 1
             
-            if (self.MIN_THRESHOLD < depth1 < self.MAX_THRESHOLD or 
-                self.MIN_THRESHOLD < depth2 < self.MAX_THRESHOLD):
-                self.reset_to_cf_action()
+            if not self.state_vars['back'] or self.state_vars['traj_index'] > 0:
+                if (self.MIN_THRESHOLD < depth1 < self.MAX_THRESHOLD or 
+                    self.MIN_THRESHOLD < depth2 < self.MAX_THRESHOLD):
+                    self.reset_to_cf_action()
         else:
             # 如果不是返回轨迹，则转回IDLE状态
             if not self.state_vars['back']:
@@ -538,7 +565,7 @@ def main(cfg):
     )
 
     scene_utils.design_scene()
-    scene_utils.create_wall3()
+    scene_utils.create_wall3(0)
     
     n = 1  # 设置无人机数量为1
     drone_cls = MultirotorBase.REGISTRY[cfg.drone_model]
@@ -637,7 +664,7 @@ def main(cfg):
     drone_fsm = DroneFSM(cfg, sim, drone, lidarInterface, lidarPath1, lidarPath2, end_point=end_point)
 
     # 主循环
-    for i in tqdm(range(20000)):
+    for i in tqdm(range(30000)):
         if sim.is_stopped():
             break
         if not sim.is_playing():
@@ -652,13 +679,13 @@ def main(cfg):
         
         # 检查是否退出CF_ACTION
         if drone_fsm.current_state == DroneState.LAND:
-            drone_fsm.save_data('T-90-ours_success.csv')
+            drone_fsm.save_data('T-0-ours_success.csv')
             print("find the goal and land, mission complete")
             break
     
     # 保存数据
     if drone_fsm.current_state != DroneState.EXIT:
-        drone_fsm.save_data('T-90-ours_fail.csv')
+        drone_fsm.save_data('T-0-ours_fail.csv')
 
     simulation_app.close()
 
