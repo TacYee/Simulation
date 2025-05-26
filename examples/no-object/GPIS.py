@@ -71,10 +71,10 @@ class GPISModel:
         self.y_outside = y[(value1 == 1) | (value2 == 1)]
 
         # **计算 laser 的 X、Y 坐标**
-        laser1x = laser1 * np.cos(yaw - 0.7853981)
-        laser1y = laser1 * np.sin(yaw - 0.7853981)
-        laser2x = laser2 * np.cos(yaw - 0.7853981)
-        laser2y = laser2 * np.sin(yaw - 0.7853981)
+        laser1x = (laser1+0.17) * np.cos(yaw - 0.7853981)
+        laser1y = (laser1+0.17) * np.sin(yaw - 0.7853981)
+        laser2x = (laser2+0.17) * np.cos(yaw - 0.7853981)
+        laser2y = (laser2+0.17) * np.sin(yaw - 0.7853981)
 
         # **如果两个值都为 1，取平均**
         laserx = np.where((value1 == 1) & (value2 == 1), (laser1x + laser2x) / 2, 
@@ -102,9 +102,9 @@ class GPISModel:
 
         self.X_boundary = np.vstack([self.x_wall+self.laser1x_wall, self.y_wall + self.laser1y_wall]).T
         self.y_boundary = np.zeros(len(self.x_wall))
-        self.X_interior = np.vstack([self.x_inside + self.laser1x_inside, self.y_inside + self.laser1y_inside]).T
+        self.X_interior = np.vstack([self.x_inside, self.y_inside]).T
         self.y_interior = -np.ones(len(self.x_inside))
-        self.X_outerior = np.vstack([self.x_outside + self.laser1x_outside, self.y_outside + self.laser1y_outside]).T
+        self.X_outerior = np.vstack([self.x_outside, self.y_outside]).T
         self.y_outerior = np.ones(len(self.x_outside))
         self.boundary_sample_ratio = boundary_sample_ratio
         self.interior_sample_ratio = interior_sample_ratio
@@ -157,14 +157,14 @@ class GPISModel:
         self.gp.fit(self.X_train, self.y_train)
     
     def predict(self):
-        x = np.linspace(-4, 4, 100)
-        y = np.linspace(-4, 4, 100)
+        x = np.linspace(-5, 5, 100)
+        y = np.linspace(-5, 5, 100)
         X, Y = np.meshgrid(x, y)
         X_test = np.vstack([X.ravel(), Y.ravel()]).T
         y_pred, sigma = self.gp.predict(X_test, return_std=True)
         self.Z = y_pred.reshape(X.shape)
         self.sigma = sigma.reshape(X.shape)
-        line_segments = self._marching_squares(100, self.Z.ravel(), self.sigma.ravel(), -4, 8/99, -4, 8/99)
+        line_segments = self._marching_squares(100, self.Z.ravel(), self.sigma.ravel(), -5, 10/99, -5, 10/99)
         self.contour_points_all = self._connect_contour_segments(line_segments, len(line_segments))
         x_vals = [point.x for point in self.contour_points_all]
         y_vals = [point.y for point in self.contour_points_all]
@@ -177,7 +177,7 @@ class GPISModel:
         contour_sigma_interp = [point.y_std for point in self.contour_points_all]
 
         self.significant_points = self._find_high_curvature_clusters_using_curvature(self.contour_points, self.curvature, self.curvature_threshold)
-        if self.exit_point:
+        if self.exit_point is not None:
             self.significant_points = np.vstack([self.significant_points, self.exit_point])
             print(f"exit_points: {self.exit_point}")
         print(f"significant_points: {self.significant_points}")
@@ -470,8 +470,8 @@ class GPISModel:
         return self.max_uncertainty_point
     
     def plot_results(self, filename=None):
-        x = np.linspace(-4, 4, 100)
-        y = np.linspace(-4, 4, 100)
+        x = np.linspace(-5, 5, 100)
+        y = np.linspace(-5, 5, 100)
         X, Y = np.meshgrid(x, y)
 
         plt.figure(figsize=(14, 6))
@@ -481,10 +481,11 @@ class GPISModel:
         plt.contourf(X, Y, self.Z, levels=np.linspace(self.Z.min(), self.Z.max(), 100), cmap="viridis")
         plt.colorbar(label='GPIS Value')
         plt.scatter(self.X_train[:, 0], self.X_train[:, 1], c=self.y_train, cmap="coolwarm", edgecolor="none", s=10)
-        plt.scatter(self.max_uncertainty_point[0], self.max_uncertainty_point[1], color='red', s=100, edgecolor='black', label='Max Uncertainty Point')
+        if self.max_uncertainty_point is not None:
+            plt.scatter(self.max_uncertainty_point[0], self.max_uncertainty_point[1], color='red', s=100, edgecolor='black', label='Max Uncertainty Point')
         plt.contour(X, Y, self.Z, levels=[0], colors='red')
         plt.scatter(self.significant_points[:, 0], self.significant_points[:, 1], c='white', s=30, label='Significant Curvature Points')
-        if self.exit_point:
+        if self.exit_point is not None:
             plt.scatter(self.exit_point[0], self.exit_point[1], c='gray', s=30, label='Exit Points')
         plt.title("2D GPIS with RBF Kernel")
         plt.xlabel("X")

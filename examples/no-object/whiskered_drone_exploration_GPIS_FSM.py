@@ -93,8 +93,8 @@ class DroneFSM:
         # 常量
         self.MIN_THRESHOLD = 0.4
         self.MAX_THRESHOLD = 0.45
-        self.ROOM_X_MIN, self.ROOM_X_MAX = -4, 4
-        self.ROOM_Y_MIN, self.ROOM_Y_MAX = -4, 4
+        self.ROOM_X_MIN, self.ROOM_X_MAX = -4.41, 4.41
+        self.ROOM_Y_MIN, self.ROOM_Y_MAX = -4.41, 4.41
         
         # 速度向量
         self.vel_forward = torch.tensor([0.2, 0.0, 0.0], device=sim.device)
@@ -165,6 +165,7 @@ class DroneFSM:
     
     def handle_boundary_violation(self, drone_state):
         """处理边界违规"""
+        
         self.data_records_temp = {k: [] for k in self.data_records_temp}
         print(f"🚨 无人机超出房间范围 (x={self.state_vars['state_x']}, y={self.state_vars['state_y']})，检查地图不确定性是否符合要求！")
         self.state_vars['outside'] = True
@@ -186,38 +187,69 @@ class DroneFSM:
         gpis.plot_results(filename='gpis_results.png')
         print(f"uncertainty percentage now is: {gpis.uncertainty_retained_percentage}%")
         
-        if gpis.uncertainty_retained_percentage < 26:
+        if gpis.uncertainty_retained_percentage < 35:
             # 使用预先设置的end_point作为目标点
             target_point = self.state_vars['end_point'] if self.state_vars['end_point'] is not None \
                           else self.state_vars['next_point']
             
             uncertainty_grid = np.resize(gpis.penalized_uncertainty_grid, (100, 100))
             value_grid = np.resize(gpis.Z, (100, 100))
-            optimizer = TrajectoryOptimizer(
-                uncertainty_grid,
-                value_grid, 
-                lambda_align=0, 
-                lambda_align_start=0,
-                lambda_smooth=0.1,
-                lambda_v=100, 
-                n_control=4, 
-                steps=100,
-                find_the_goal=True
-            )
             
-            self.state_vars['trajectory'] = optimizer.optimize(
-                np.array([self.state_vars['state_x'], self.state_vars['state_y']]), 
-                self.state_vars['current_yaw']-0.7853981,
-                target_point,  # 使用目标点
-                0
-            )
-            optimizer.visualize_trajectory(
-                self.state_vars['trajectory'], 
-                np.array([self.state_vars['state_x'], self.state_vars['state_y']]), 
-                self.state_vars['current_yaw']-0.7853981, 
-                target_point,  # 使用目标点
-                0
-            )
+            if self.current_state != DroneState.BACKWARD:
+                optimizer = TrajectoryOptimizer(
+                    uncertainty_grid,
+                    value_grid, 
+                    lambda_align=0, 
+                    lambda_align_start=1000,
+                    lambda_smooth=1,
+                    lambda_v=10, 
+                    lambda_u=0,
+                    n_control=4, 
+                    steps=40,
+                    find_the_goal=True
+                )
+                self.state_vars['trajectory'] = optimizer.optimize(
+                    np.array([self.state_vars['state_x'], self.state_vars['state_y']]), 
+                    self.state_vars['current_yaw']-0.7853981,
+                    target_point,  # 使用目标点
+                    0,
+                    t_o=0.5
+                )
+
+                optimizer.visualize_trajectory(
+                    self.state_vars['trajectory'], 
+                    np.array([self.state_vars['state_x'], self.state_vars['state_y']]), 
+                    self.state_vars['current_yaw']-0.7853981, 
+                    target_point,  # 使用目标点
+                    0
+                )
+            else:
+                optimizer = TrajectoryOptimizer(
+                    uncertainty_grid,
+                    value_grid, 
+                    lambda_align=0, 
+                    lambda_align_start=1000,
+                    lambda_smooth=1,
+                    lambda_v=10, 
+                    lambda_u=0,
+                    n_control=4, 
+                    steps=40,
+                    find_the_goal=True
+                )
+                self.state_vars['trajectory'] = optimizer.optimize(
+                    np.array([self.state_vars['state_x'], self.state_vars['state_y']]), 
+                    self.state_vars['current_yaw'] - 0.7853981 + torch.pi,
+                    target_point,  # 使用目标点,
+                    0,
+                    t_o=0.7
+                )
+                optimizer.visualize_trajectory(
+                    self.state_vars['trajectory'], 
+                    np.array([self.state_vars['state_x'], self.state_vars['state_y']]), 
+                    self.state_vars['current_yaw'] - 0.7853981 + torch.pi, 
+                    target_point,  # 使用目标点
+                    0
+                )
             
             self.state_vars['finish_CF'] = False
             self.state_vars['traj_index'] = 0
@@ -284,7 +316,7 @@ class DroneFSM:
         self.record_data(depth1, depth2)
         
         # 检查边界
-        if self.check_room_boundary() and self.current_state != DroneState.EXIT and not self.state_vars['back']:
+        if self.check_room_boundary() and self.current_state != DroneState.EXIT and self.current_state != DroneState.LAND and not self.state_vars['back']:
             self.handle_boundary_violation(drone_state)
     def state_idle(self, drone_state, depth1, depth2):
         """空闲状态"""
@@ -350,7 +382,11 @@ class DroneFSM:
             self.state_vars['laser_value1'] = 0
         if depth2 < 0.48 and self.state_vars['CF_action_counter'] % 40 == 0 and not self.state_vars['outside']:
             self.state_vars['laser_value2'] = 0
-        if residuals > 0.05 and not self.state_vars['last_trajectory']:
+        if self.state_vars['outside'] and 0.425 > depth1 > 0.435 and 0.425 > depth2 > 0.435:
+            self.state_vars['backward_action_counter'] = 200
+            self.state_vars['finish_CF'] = True
+            self.transition_to(DroneState.BACKWARD)
+        elif residuals > 0.07 and not self.state_vars['last_trajectory']:
             self.state_vars['goal_counter'] = 150
             self.state_vars['CF_action_counter'] = 0
             self.state_vars['backward_action_counter'] = 0
@@ -384,7 +420,6 @@ class DroneFSM:
         elif self.state_vars['backward_action_counter'] <= 0 and self.state_vars['direction_changes_completed'] >= 3 and self.state_vars['finish_CF']:
             if self.state_vars['outside']:
                 self.handle_boundary_violation(drone_state)
-                self.transition_to(DroneState.FOLLOW_TRAJECTORY)
             else:
                 self.handle_gpis_analysis()
                 self.transition_to(DroneState.FOLLOW_TRAJECTORY)
@@ -417,11 +452,26 @@ class DroneFSM:
         gpis.sample_data()
         gpis.train_model()
         gpis.predict()
+        uncertainty_grid = np.resize(gpis.penalized_uncertainty_grid, (100, 100))
         print(f"uncertainty percentage now is: {gpis.uncertainty_retained_percentage}%")
-        if gpis.uncertainty_retained_percentage < 26 and self.state_vars['exit_point'] is not None:
+        if gpis.uncertainty_retained_percentage < 35 and self.state_vars['exit_point'] is not None:
             self.state_vars['next_point'] = self.state_vars['exit_point']
             gpis.plot_results(filename='gpis_results.png')
             print("finish exploration and found the exit")
+            # 轨迹规划
+            goal_yaw = gpis.compute_normal(
+                self.state_vars['next_point'], gpis.weights, gpis.X_train, gpis.kernel
+            )
+            value_grid = np.resize(gpis.Z, (100, 100)) 
+            optimizer = TrajectoryOptimizer(
+                uncertainty_grid, 
+                value_grid,
+                lambda_align=0.4, 
+                lambda_smooth=0.8,
+                lambda_u=0, 
+                n_control=5, 
+                steps=100
+            )
         else:
             self.state_vars['next_point'] = gpis.find_max_uncertainty_point()
             print("exploration not yet complete")    
@@ -429,19 +479,18 @@ class DroneFSM:
         # 计算目标朝向
         
         # 轨迹规划
-        goal_yaw = gpis.compute_normal(
-            self.state_vars['next_point'], gpis.weights, gpis.X_train, gpis.kernel
-        )
-        uncertainty_grid = np.resize(gpis.penalized_uncertainty_grid, (100, 100))
-        value_grid = np.resize(gpis.Z, (100, 100)) 
-        optimizer = TrajectoryOptimizer(
-            uncertainty_grid, 
-            value_grid,
-            lambda_align=0.2, 
-            lambda_smooth=0.8, 
-            n_control=5, 
-            steps=100
-        )
+            goal_yaw = gpis.compute_normal(
+                self.state_vars['next_point'], gpis.weights, gpis.X_train, gpis.kernel
+            )
+            value_grid = np.resize(gpis.Z, (100, 100)) 
+            optimizer = TrajectoryOptimizer(
+                uncertainty_grid, 
+                value_grid,
+                lambda_align=0.2, 
+                lambda_smooth=0.8, 
+                n_control=5, 
+                steps=100
+            )
         
         self.state_vars['trajectory'] = optimizer.optimize(
             np.array([self.state_vars['state_x'], self.state_vars['state_y']]), 
@@ -500,7 +549,7 @@ class DroneFSM:
             self.drone.apply_action(action)
 
             
-            if pos_distance < 0.01 and torch.abs(yaw_diff) < np.deg2rad(2):
+            if pos_distance < 0.05 and torch.abs(yaw_diff) < np.deg2rad(2):
                 self.state_vars['traj_index'] += 1
                 print(f"Arrived at waypoint {self.state_vars['traj_index']}, moving to next.")
                 # 如果是返回轨迹且到达终点
@@ -597,7 +646,7 @@ def main(cfg):
         vertical_resolution=1,
         rotation_rate=0.0,
         high_lod=False,
-        yaw_offset=-45.0,
+        yaw_offset=-45,
         enable_semantics=False,
     )
     
@@ -616,12 +665,12 @@ def main(cfg):
         vertical_resolution=1,
         rotation_rate=0.0,
         high_lod=False,
-        yaw_offset=-45.0,
+        yaw_offset=-45,
         enable_semantics=False,
     )
     
     # 设置激光雷达位置和方向
-    position1 = Gf.Vec3d(0.08, 0.08, 0)
+    position1 = Gf.Vec3d(0.12, 0.12, 0)
     rotation1 = Gf.Vec3d(0, 0, 0)
     scale1 = Gf.Vec3d(1, 1, 1) 
     omni.kit.commands.execute("TransformMultiPrimsSRTCpp",
@@ -638,7 +687,7 @@ def main(cfg):
         time_code=0.0,
     )
 
-    position2 = Gf.Vec3d(-0.08, -0.08, 0)
+    position2 = Gf.Vec3d(-0.12, -0.12, 0)
     rotation2 = Gf.Vec3d(0, 0, 0)
     scale2 = Gf.Vec3d(1, 1, 1) 
     omni.kit.commands.execute("TransformMultiPrimsSRTCpp",
@@ -658,13 +707,13 @@ def main(cfg):
     sim.reset()
     drone.initialize()
 
-    end_point = np.array([0, -3.5])  # 示例终点坐标
+    end_point = np.array([-4.5, -4.5])  # 示例终点坐标
 
     # 创建状态机实例
     drone_fsm = DroneFSM(cfg, sim, drone, lidarInterface, lidarPath1, lidarPath2, end_point=end_point)
 
     # 主循环
-    for i in tqdm(range(30000)):
+    for i in tqdm(range(40000)):
         if sim.is_stopped():
             break
         if not sim.is_playing():

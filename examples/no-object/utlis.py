@@ -175,8 +175,8 @@ class TrajectoryOptimizer:
 
     def bilinear_uncertainty(self, x, grid):
         h, w = grid.shape
-        x_img = (x[0] + 4) / 8 * (w - 1)
-        y_img = (x[1] + 4) / 8 * (h - 1)
+        x_img = (x[0] + 5) / 10 * (w - 1)
+        y_img = (x[1] + 5) / 10 * (h - 1)
         x_img = np.clip(x_img, 0, w - 2)
         y_img = np.clip(y_img, 0, h - 2)
         x0, x1 = int(np.floor(x_img)), min(int(np.floor(x_img)) + 1, w - 1)
@@ -198,7 +198,7 @@ class TrajectoryOptimizer:
             return x.detach().cpu().numpy()
         return x
 
-    def optimize(self, x_start, v_start, x_target, theta):
+    def optimize(self, x_start, v_start, x_target, theta, t_o=0.7):
         n_target = np.array([np.cos(theta), np.sin(theta)])
         v_start = np.array([np.cos(self.to_numpy(v_start)), np.sin(self.to_numpy(v_start))])
         control_points = np.linspace(
@@ -251,31 +251,26 @@ class TrajectoryOptimizer:
             if self.find_the_goal == True:
                 for p in traj:
                     v = self.bilinear_uncertainty(p, self.value_grid)
-                    if v > 0:
-                        penalty -= self.lambda_v * v
-                    else:
-                        penalty -= self.lambda_v * v
-            cost += penalty
+                    penalty -= self.lambda_v * v
+            cost += penalty/length_total
 
             return cost
 
         def constraint_fn(x_opt):
-            full_points = np.vstack([x_start,
-                                    x_opt.reshape(-1, 2),
-                                    x_target])
+            full_points = x_opt.reshape(-1, 2)
             traj = self.compute_trajectory(full_points)
             values = np.array([self.bilinear_uncertainty(p, self.value_grid) for p in traj])
 
             if self.find_the_goal:
                 # v 必须都 > 0，即 values - epsilon >= 0
-                return values - 0.1
+                return values - t_o
             else:
                 # v 必须都 < 0，即 -(values + epsilon) >= 0
                 return -(values - 0.1)
 
         nonlinear_constraint = NonlinearConstraint(constraint_fn, 0, np.inf)
 
-        bounds = [(-4.5, 4.5)] * len(x0)
+        bounds = [(-5, 5)] * len(x0)
         result = minimize(cost_fn, x0, method='SLSQP', bounds=bounds,
                           constraints=[nonlinear_constraint],
                           options={'maxiter': 100, 'ftol': 1e-6, 'disp': True})
@@ -309,7 +304,7 @@ class TrajectoryOptimizer:
         v_start = np.array([np.cos(theta_start), np.sin(theta_start)])
         n_target = np.array([np.cos(theta_target), np.sin(theta_target)])
         plt.figure(figsize=(8, 8))
-        extent = [-4, 4, -4, 4]  # [xmin, xmax, ymin, ymax]
+        extent = [-5, 5, -5, 5]  # [xmin, xmax, ymin, ymax]
         plt.imshow(self.uncertainty_grid, cmap='hot', origin='lower', alpha=0.6, extent=extent)
         plt.plot(trajectory[:, 0], trajectory[:, 1], 'b-', linewidth=2, label='Optimized Trajectory')
         plt.scatter(*x_start, c='green', label='Start')
@@ -336,8 +331,8 @@ class TrajectoryOptimizer:
             plt.arrow(float(p1[0]), float(p1[1]),
                     float(dir_vec[0]) * 0.5, float(dir_vec[1]) * 0.5,
                     head_width=0.1, color='blue', alpha=0.7)
-        plt.xlim(-4, 4)
-        plt.ylim(-4, 4)
+        plt.xlim(-5, 5)
+        plt.ylim(-5, 5)
         plt.legend()
         plt.grid(True)
         plt.title("Trajectory with Direction Arrows")
