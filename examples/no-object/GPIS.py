@@ -5,7 +5,7 @@ import contourpy
 # from sklearn.gaussian_process import GaussianProcessRegressor
 # from sklearn.gaussian_process.kernels import Kernel
 from scipy.spatial import ConvexHull
-
+from matplotlib.patches import Rectangle
 class InverseMultiquadricKernel:
     def __init__(self, c=2.0):
         self.c = c
@@ -71,18 +71,18 @@ class GPISModel:
         self.y_outside = y[(value1 == 1) | (value2 == 1)]
 
         # **计算 laser 的 X、Y 坐标**
-        laser1x = (laser1+0.17) * np.cos(yaw - 0.7853981)
-        laser1y = (laser1+0.17) * np.sin(yaw - 0.7853981)
-        laser2x = (laser2+0.17) * np.cos(yaw - 0.7853981)
-        laser2y = (laser2+0.17) * np.sin(yaw - 0.7853981)
+        laser1x = (laser1) * np.cos(yaw - 0.7853981)
+        laser1y = (laser1) * np.sin(yaw - 0.7853981)
+        laser2x = (laser2) * np.cos(yaw - 0.7853981)
+        laser2y = (laser2) * np.sin(yaw - 0.7853981)
 
         # **如果两个值都为 1，取平均**
-        laserx = np.where((value1 == 1) & (value2 == 1), (laser1x + laser2x) / 2, 
-                        np.where(value1 == 1, laser1x, 
-                                np.where(value2 == 1, laser2x, 0)))
-        lasery = np.where((value1 == 1) & (value2 == 1), (laser1y + laser2y) / 2, 
-                        np.where(value1 == 1, laser1y, 
-                                np.where(value2 == 1, laser2y, 0)))
+        laserx = np.where((value1 == 0) & (value2 == 0), (laser1x + laser2x) / 2, 
+                        np.where(value1 == 0, laser1x, 
+                                np.where(value2 == 0, laser2x, 0)))
+        lasery = np.where((value1 == 0) & (value2 == 0), (laser1y + laser2y) / 2, 
+                        np.where(value1 == 0, laser1y, 
+                                np.where(value2 == 0, laser2y, 0)))
 
         # **区分墙壁点和内部点**
         self.laser1x_wall = laserx[(value1 == 0) | (value2 == 0)]
@@ -91,7 +91,7 @@ class GPISModel:
         self.laser1y_inside = lasery[(value1 == -1) | (value2 == -1)]
         self.laser1x_outside = laserx[(value1 == 1) | (value2 == 1)]
         self.laser1y_outside = lasery[(value1 == 1) | (value2 == 1)]
-        print(value1)
+        print(self.laser1x_wall)
 
         print(f"x_wall size: {self.x_wall.size}")
         print(f"y_wall size: {self.y_wall.size}")
@@ -157,14 +157,14 @@ class GPISModel:
         self.gp.fit(self.X_train, self.y_train)
     
     def predict(self):
-        x = np.linspace(-5, 5, 100)
-        y = np.linspace(-5, 5, 100)
+        x = np.linspace(-6, 6, 100)
+        y = np.linspace(-6, 6, 100)
         X, Y = np.meshgrid(x, y)
         X_test = np.vstack([X.ravel(), Y.ravel()]).T
         y_pred, sigma = self.gp.predict(X_test, return_std=True)
         self.Z = y_pred.reshape(X.shape)
         self.sigma = sigma.reshape(X.shape)
-        line_segments = self._marching_squares(100, self.Z.ravel(), self.sigma.ravel(), -5, 10/99, -5, 10/99)
+        line_segments = self._marching_squares(100, self.Z.ravel(), self.sigma.ravel(), -6, 12/99, -6, 12/99)
         self.contour_points_all = self._connect_contour_segments(line_segments, len(line_segments))
         x_vals = [point.x for point in self.contour_points_all]
         y_vals = [point.y for point in self.contour_points_all]
@@ -190,7 +190,15 @@ class GPISModel:
         self.original_uncertainty_grid = original_uncertainty.reshape(X.shape)
         self.penalized_uncertainty_grid = penalized_uncertainty.reshape(X.shape)
         self.contour_sigma_penalized = contour_sigma_interp + penalty_contour
-        self.uncertainty_retained_percentage = np.mean(self.original_uncertainty_grid) * 100
+        mask = y_pred <= 0.1  # 预测值小于等于0.1的点
+        uncertainty_selected = original_uncertainty[mask]
+        num_points = np.sum(mask)
+
+        if num_points > 0:
+            retained_uncertainty = np.sum(uncertainty_selected)
+            self.uncertainty_retained_percentage = (retained_uncertainty / num_points) * 100
+        else:
+            self.uncertainty_retained_percentage = 0.0  # 防止除以0
 
     class Point:
         def __init__(self, x, y, y_std):
@@ -468,40 +476,73 @@ class GPISModel:
         max_uncertainty_index = np.argmax(self.contour_sigma_penalized)
         self.max_uncertainty_point = self.contour_points[max_uncertainty_index]
         return self.max_uncertainty_point
-    
+
     def plot_results(self, filename=None):
-        x = np.linspace(-5, 5, 100)
-        y = np.linspace(-5, 5, 100)
+        x = np.linspace(-6, 6, 100)
+        y = np.linspace(-6, 6, 100)
         X, Y = np.meshgrid(x, y)
 
         plt.figure(figsize=(14, 6))
 
+        # 墙壁定义
+        cubes = [
+            {"name": "fancy_cube1", "position": np.array([-1.5, -1.1, 0]), "scale": np.array([1, 0.2, 2])},
+            {"name": "fancy_cube2", "position": np.array([0.5, -2.1, 0]), "scale": np.array([3, 0.2, 2])},
+            {"name": "fancy_cube3", "position": np.array([-1.1, -1.7, 0]), "scale": np.array([0.2, 1, 2])},
+            {"name": "fancy_cube4", "position": np.array([-2.1, 0.5, 0]), "scale": np.array([0.2, 3.4, 2])},
+            {"name": "fancy_cube5", "position": np.array([2.1, 0.0, 0]), "scale": np.array([0.2, 4.4, 2])},
+            {"name": "fancy_cube6", "position": np.array([-0.6, 2.1, 0]), "scale": np.array([2.8, 0.2, 2])}
+        ]
+
         # 左图：GPIS值
-        plt.subplot(1, 2, 1)
-        plt.contourf(X, Y, self.Z, levels=np.linspace(self.Z.min(), self.Z.max(), 100), cmap="viridis")
-        plt.colorbar(label='GPIS Value')
-        plt.scatter(self.X_train[:, 0], self.X_train[:, 1], c=self.y_train, cmap="coolwarm", edgecolor="none", s=10)
+        ax1 = plt.subplot(1, 2, 1)
+        cf1 = ax1.contourf(X, Y, self.Z, levels=np.linspace(self.Z.min(), self.Z.max(), 100), cmap="viridis")
+        plt.colorbar(cf1, ax=ax1, label='GPIS Value')
+        ax1.scatter(self.X_train[:, 0], self.X_train[:, 1], c=self.y_train, cmap="coolwarm", edgecolor="none", s=10)
         if self.max_uncertainty_point is not None:
-            plt.scatter(self.max_uncertainty_point[0], self.max_uncertainty_point[1], color='red', s=100, edgecolor='black', label='Max Uncertainty Point')
-        plt.contour(X, Y, self.Z, levels=[0], colors='red')
-        plt.scatter(self.significant_points[:, 0], self.significant_points[:, 1], c='white', s=30, label='Significant Curvature Points')
+            ax1.scatter(self.max_uncertainty_point[0], self.max_uncertainty_point[1], color='red', s=100, edgecolor='black', label='Max Uncertainty Point')
+        ax1.contour(X, Y, self.Z, levels=[0], colors='red')
+        ax1.scatter(self.significant_points[:, 0], self.significant_points[:, 1], c='white', s=30, label='Significant Curvature Points')
         if self.exit_point is not None:
-            plt.scatter(self.exit_point[0], self.exit_point[1], c='gray', s=30, label='Exit Points')
-        plt.title("2D GPIS with RBF Kernel")
-        plt.xlabel("X")
-        plt.ylabel("Y")
+            ax1.scatter(self.exit_point[0], self.exit_point[1], c='gray', s=30, label='Exit Points')
+        ax1.set_title("2D GPIS with RBF Kernel")
+        ax1.set_xlabel("X")
+        ax1.set_ylabel("Y")
+        ax1.set_aspect('equal')
+        ax1.grid(True)
+
+        # 增加墙壁到左图
+        for cube in cubes:
+            pos = cube["position"]*1.33
+            scale = cube["scale"]*1.33
+            bottom_left = pos[:2] - scale[:2] / 2
+            width, height = scale[0], scale[1]
+            rect = Rectangle(bottom_left, width, height, linewidth=1.5, edgecolor='blue', facecolor='skyblue', alpha=0.5)
+            ax1.add_patch(rect)
+            ax1.text(pos[0], pos[1], cube["name"], fontsize=6, ha='center', va='center', color='black')
 
         # 右图：施加了惩罚后的不确定性
-        plt.subplot(1, 2, 2)
-        plt.contourf(X, Y, self.penalized_uncertainty_grid, levels=np.linspace(self.penalized_uncertainty_grid.min(), self.penalized_uncertainty_grid.max(), 100), cmap="viridis")
-        plt.colorbar(label='Penalized Uncertainty (Std)')
-        plt.scatter(self.X_train[:, 0], self.X_train[:, 1], c=self.y_train, cmap="coolwarm", edgecolor="none", s=10)
-        plt.title("Uncertainty (Std) with Penalty")
-        plt.xlabel("X")
-        plt.ylabel("Y")
+        ax2 = plt.subplot(1, 2, 2)
+        cf2 = ax2.contourf(X, Y, self.penalized_uncertainty_grid, levels=np.linspace(self.penalized_uncertainty_grid.min(), self.penalized_uncertainty_grid.max(), 100), cmap="viridis")
+        plt.colorbar(cf2, ax=ax2, label='Penalized Uncertainty (Std)')
+        ax2.scatter(self.X_train[:, 0], self.X_train[:, 1], c=self.y_train, cmap="coolwarm", edgecolor="none", s=10)
+        ax2.set_title("Uncertainty (Std) with Penalty")
+        ax2.set_xlabel("X")
+        ax2.set_ylabel("Y")
+        ax2.set_aspect('equal')
+        ax2.grid(True)
+
+        # 增加墙壁到右图
+        for cube in cubes:
+            pos = cube["position"]
+            scale = cube["scale"]
+            bottom_left = pos[:2] - scale[:2] / 2
+            width, height = scale[0], scale[1]
+            rect = Rectangle(bottom_left, width, height, linewidth=1.5, edgecolor='blue', facecolor='skyblue', alpha=0.5)
+            ax2.add_patch(rect)
+            ax2.text(pos[0], pos[1], cube["name"], fontsize=6, ha='center', va='center', color='black')
 
         plt.tight_layout()
-
         if filename:
             plt.savefig(filename)
         plt.show()

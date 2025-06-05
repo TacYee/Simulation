@@ -175,8 +175,8 @@ class TrajectoryOptimizer:
 
     def bilinear_uncertainty(self, x, grid):
         h, w = grid.shape
-        x_img = (x[0] + 5) / 10 * (w - 1)
-        y_img = (x[1] + 5) / 10 * (h - 1)
+        x_img = (x[0] + 6) / 12 * (w - 1)
+        y_img = (x[1] + 6) / 12 * (h - 1)
         x_img = np.clip(x_img, 0, w - 2)
         y_img = np.clip(y_img, 0, h - 2)
         x0, x1 = int(np.floor(x_img)), min(int(np.floor(x_img)) + 1, w - 1)
@@ -197,8 +197,38 @@ class TrajectoryOptimizer:
         if isinstance(x, torch.Tensor):
             return x.detach().cpu().numpy()
         return x
-
+    
+    def check_constraint_satisfied(self, traj, value_grid, find_the_goal=True, threshold=0.7):
+        """验证 trajectory 是否满足硬约束"""
+        values = np.array([TrajectoryOptimizer.bilinear_uncertainty(None, p, value_grid) for p in traj])
+        if find_the_goal:
+            return np.all(values >= threshold)
+        else:
+            return np.all(values <= 0.1)
     def optimize(self, x_start, v_start, x_target, theta, t_o=0.7):
+        def run_optimizer(method, max_iter, tol, use_verbose=False):
+            x0 = control_points[1:-1].flatten()
+            
+            if method == 'trust-constr':
+                result = minimize(
+                    cost_fn, x0, method=method, bounds=bounds,
+                    constraints=[nonlinear_constraint],
+                    options={
+                        'maxiter': max_iter,
+                        'verbose': 3 if use_verbose else 0
+                    }
+                )
+            else:
+                result = minimize(
+                    cost_fn, x0, method=method, bounds=bounds,
+                    constraints=[nonlinear_constraint],
+                    options={
+                        'maxiter': max_iter,
+                        'ftol': tol,  # 其他方法依然用ftol
+                        'disp': use_verbose
+                    }
+                )
+            return result
         n_target = np.array([np.cos(theta), np.sin(theta)])
         v_start = np.array([np.cos(self.to_numpy(v_start)), np.sin(self.to_numpy(v_start))])
         control_points = np.linspace(
@@ -270,14 +300,17 @@ class TrajectoryOptimizer:
 
         nonlinear_constraint = NonlinearConstraint(constraint_fn, 0, np.inf)
 
-        bounds = [(-5, 5)] * len(x0)
-        result = minimize(cost_fn, x0, method='SLSQP', bounds=bounds,
-                          constraints=[nonlinear_constraint],
-                          options={'maxiter': 100, 'ftol': 1e-6, 'disp': True})
-        print(result)
+        bounds = [(-6, 6)] * len(x0)
+        result = run_optimizer("SLSQP", max_iter=50, tol=1e-4)
+        trajectory = self.compute_trajectory(np.vstack([x_start, result.x.reshape(-1, 2), x_target]))
+        satisfied = self.check_constraint_satisfied(trajectory, self.value_grid, self.find_the_goal, t_o)
 
-        optimized_pts = np.vstack([x_start, result.x.reshape(-1, 2), x_target])
-        trajectory = self.compute_trajectory(optimized_pts)
+        if result.success and satisfied:
+            print("✅ SLSQP succeeded and constraints satisfied.")
+        else:
+            print("⚠️ SLSQP failed or constraints violated. Falling back to trust-constr...")
+            result = run_optimizer("trust-constr", max_iter=50, tol=1e-6, use_verbose=True)
+            trajectory = self.compute_trajectory(np.vstack([x_start, result.x.reshape(-1, 2), x_target]))
 
         avg_uncertainty = np.mean([self.bilinear_uncertainty(p, self.uncertainty_grid) for p in trajectory])
         print(f"Average Uncertainty Along Trajectory: {avg_uncertainty:.4f}")
@@ -304,7 +337,7 @@ class TrajectoryOptimizer:
         v_start = np.array([np.cos(theta_start), np.sin(theta_start)])
         n_target = np.array([np.cos(theta_target), np.sin(theta_target)])
         plt.figure(figsize=(8, 8))
-        extent = [-5, 5, -5, 5]  # [xmin, xmax, ymin, ymax]
+        extent = [-6, 6, -6, 6]  # [xmin, xmax, ymin, ymax]
         plt.imshow(self.uncertainty_grid, cmap='hot', origin='lower', alpha=0.6, extent=extent)
         plt.plot(trajectory[:, 0], trajectory[:, 1], 'b-', linewidth=2, label='Optimized Trajectory')
         plt.scatter(*x_start, c='green', label='Start')
@@ -331,8 +364,8 @@ class TrajectoryOptimizer:
             plt.arrow(float(p1[0]), float(p1[1]),
                     float(dir_vec[0]) * 0.5, float(dir_vec[1]) * 0.5,
                     head_width=0.1, color='blue', alpha=0.7)
-        plt.xlim(-5, 5)
-        plt.ylim(-5, 5)
+        plt.xlim(-6, 6)
+        plt.ylim(-6, 6)
         plt.legend()
         plt.grid(True)
         plt.title("Trajectory with Direction Arrows")

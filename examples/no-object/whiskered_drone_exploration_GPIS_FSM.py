@@ -93,8 +93,8 @@ class DroneFSM:
         # 常量
         self.MIN_THRESHOLD = 0.4
         self.MAX_THRESHOLD = 0.45
-        self.ROOM_X_MIN, self.ROOM_X_MAX = -4.41, 4.41
-        self.ROOM_Y_MIN, self.ROOM_Y_MAX = -4.41, 4.41
+        self.ROOM_X_MIN, self.ROOM_X_MAX = -4, 4
+        self.ROOM_Y_MIN, self.ROOM_Y_MAX = -4, 4
         
         # 速度向量
         self.vel_forward = torch.tensor([0.2, 0.0, 0.0], device=sim.device)
@@ -143,7 +143,9 @@ class DroneFSM:
         self.state_vars['state_y'] = drone_state[..., 1].item()
         self.state_vars['state_z'] = drone_state[..., 2].item()
         _, self.state_vars['current_yaw'] = process_quaternion(drone_state, self.rot_z_45)
+
         return drone_state
+
     
     def record_data(self, depth1, depth2):
         """记录数据"""
@@ -187,7 +189,7 @@ class DroneFSM:
         gpis.plot_results(filename='gpis_results.png')
         print(f"uncertainty percentage now is: {gpis.uncertainty_retained_percentage}%")
         
-        if gpis.uncertainty_retained_percentage < 35:
+        if gpis.uncertainty_retained_percentage < 6.5:
             # 使用预先设置的end_point作为目标点
             target_point = self.state_vars['end_point'] if self.state_vars['end_point'] is not None \
                           else self.state_vars['next_point']
@@ -200,7 +202,7 @@ class DroneFSM:
                     uncertainty_grid,
                     value_grid, 
                     lambda_align=0, 
-                    lambda_align_start=1000,
+                    lambda_align_start=1,
                     lambda_smooth=1,
                     lambda_v=10, 
                     lambda_u=0,
@@ -213,7 +215,7 @@ class DroneFSM:
                     self.state_vars['current_yaw']-0.7853981,
                     target_point,  # 使用目标点
                     0,
-                    t_o=0.5
+                    t_o=0.2
                 )
 
                 optimizer.visualize_trajectory(
@@ -228,7 +230,7 @@ class DroneFSM:
                     uncertainty_grid,
                     value_grid, 
                     lambda_align=0, 
-                    lambda_align_start=1000,
+                    lambda_align_start=100,
                     lambda_smooth=1,
                     lambda_v=10, 
                     lambda_u=0,
@@ -241,7 +243,7 @@ class DroneFSM:
                     self.state_vars['current_yaw'] - 0.7853981 + torch.pi,
                     target_point,  # 使用目标点,
                     0,
-                    t_o=0.7
+                    t_o=0.2
                 )
                 optimizer.visualize_trajectory(
                     self.state_vars['trajectory'], 
@@ -316,14 +318,14 @@ class DroneFSM:
         self.record_data(depth1, depth2)
         
         # 检查边界
-        if self.check_room_boundary() and self.current_state != DroneState.EXIT and self.current_state != DroneState.LAND and not self.state_vars['back']:
+        if self.check_room_boundary() and self.current_state != DroneState.EXIT and self.current_state != DroneState.LAND  and self.current_state != DroneState.CF_ACTION and self.current_state != DroneState.BACKWARD and not self.state_vars['back']:
             self.handle_boundary_violation(drone_state)
     def state_idle(self, drone_state, depth1, depth2):
         """空闲状态"""
         if (self.MIN_THRESHOLD < depth1 < self.MAX_THRESHOLD and 
             self.MIN_THRESHOLD < depth2 < self.MAX_THRESHOLD):
             # 进入CF动作状态
-            self.state_vars['CF_action_counter'] = 200
+            self.state_vars['CF_action_counter'] = 220
             self.state_vars['backward_action_counter'] = 150
             self.state_vars['Forward_counter'] = 0
             random_direction_rad = np.deg2rad(-90)
@@ -382,10 +384,13 @@ class DroneFSM:
             self.state_vars['laser_value1'] = 0
         if depth2 < 0.48 and self.state_vars['CF_action_counter'] % 40 == 0 and not self.state_vars['outside']:
             self.state_vars['laser_value2'] = 0
-        if self.state_vars['outside'] and 0.425 > depth1 > 0.435 and 0.425 > depth2 > 0.435:
-            self.state_vars['backward_action_counter'] = 200
-            self.state_vars['finish_CF'] = True
-            self.transition_to(DroneState.BACKWARD)
+        if self.state_vars['outside']:
+            self.state_vars['CF_action_counter'] += 1
+            if np.abs(depth1 - depth2) < 0.025 :
+                self.state_vars['backward_action_counter'] = 200
+                self.state_vars['finish_CF'] = True
+                self.transition_to(DroneState.BACKWARD)
+                print("less than 0.025")
         elif residuals > 0.07 and not self.state_vars['last_trajectory']:
             self.state_vars['goal_counter'] = 150
             self.state_vars['CF_action_counter'] = 0
@@ -454,7 +459,7 @@ class DroneFSM:
         gpis.predict()
         uncertainty_grid = np.resize(gpis.penalized_uncertainty_grid, (100, 100))
         print(f"uncertainty percentage now is: {gpis.uncertainty_retained_percentage}%")
-        if gpis.uncertainty_retained_percentage < 35 and self.state_vars['exit_point'] is not None:
+        if gpis.uncertainty_retained_percentage < 6.5 and self.state_vars['exit_point'] is not None:
             self.state_vars['next_point'] = self.state_vars['exit_point']
             gpis.plot_results(filename='gpis_results.png')
             print("finish exploration and found the exit")
@@ -580,7 +585,7 @@ class DroneFSM:
         
     def reset_to_cf_action(self):
         """重置到CF动作状态"""
-        self.state_vars['CF_action_counter'] = 200
+        self.state_vars['CF_action_counter'] = 220
         self.state_vars['backward_action_counter'] = 150
         self.state_vars['direction_change_counter'] = 300
         self.state_vars['Forward_counter'] = 0
