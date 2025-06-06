@@ -386,12 +386,12 @@ class DroneFSM:
             self.state_vars['laser_value2'] = 0
         if self.state_vars['outside']:
             self.state_vars['CF_action_counter'] += 1
-            if np.abs(depth1 - depth2) < 0.025 :
+            if np.abs(depth1 - depth2) < 0.015 :
                 self.state_vars['backward_action_counter'] = 200
                 self.state_vars['finish_CF'] = True
                 self.transition_to(DroneState.BACKWARD)
-                print("less than 0.025")
-        elif residuals > 0.07 and not self.state_vars['last_trajectory']:
+                print("less than 0.015")
+        elif residuals > 0.08 and not self.state_vars['last_trajectory']:
             self.state_vars['goal_counter'] = 150
             self.state_vars['CF_action_counter'] = 0
             self.state_vars['backward_action_counter'] = 0
@@ -554,7 +554,7 @@ class DroneFSM:
             self.drone.apply_action(action)
 
             
-            if pos_distance < 0.05 and torch.abs(yaw_diff) < np.deg2rad(2):
+            if pos_distance < 0.1 and torch.abs(yaw_diff) < np.deg2rad(2):
                 self.state_vars['traj_index'] += 1
                 print(f"Arrived at waypoint {self.state_vars['traj_index']}, moving to next.")
                 # 如果是返回轨迹且到达终点
@@ -619,7 +619,7 @@ def main(cfg):
     )
 
     scene_utils.design_scene()
-    scene_utils.create_wall3(0)
+    scene_utils.create_wall3(315)
     
     n = 1  # 设置无人机数量为1
     drone_cls = MultirotorBase.REGISTRY[cfg.drone_model]
@@ -733,13 +733,13 @@ def main(cfg):
         
         # 检查是否退出CF_ACTION
         if drone_fsm.current_state == DroneState.LAND:
-            drone_fsm.save_data('T-0-ours_success.csv')
+            drone_fsm.save_data('T-315-ours_success.csv')
             print("find the goal and land, mission complete")
             break
     
     # 保存数据
     if drone_fsm.current_state != DroneState.EXIT:
-        drone_fsm.save_data('T-0-ours_fail.csv')
+        drone_fsm.save_data('T-315-ours_fail.csv')
 
     simulation_app.close()
 
