@@ -534,8 +534,8 @@ class GPISModel:
 
         # 增加墙壁到右图
         for cube in cubes:
-            pos = cube["position"]
-            scale = cube["scale"]
+            pos = cube["position"]*1.33
+            scale = cube["scale"]*1.33
             bottom_left = pos[:2] - scale[:2] / 2
             width, height = scale[0], scale[1]
             rect = Rectangle(bottom_left, width, height, linewidth=1.5, edgecolor='blue', facecolor='skyblue', alpha=0.5)
