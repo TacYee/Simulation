@@ -289,14 +289,32 @@ class TrajectoryOptimizer:
         def constraint_fn(x_opt):
             full_points = x_opt.reshape(-1, 2)
             traj = self.compute_trajectory(full_points)
-            values = np.array([self.bilinear_uncertainty(p, self.value_grid) for p in traj])
+
+            size = 0.2  # 假设是 0.25 × 0.25 的正方形
+
+            # 检查无人机轮廓（四个角）都满足条件
+            offset = size / 2
+            offsets = np.array([
+                [-offset, -offset],
+                [-offset,  offset],
+                [ offset, -offset],
+                [ offset,  offset]
+            ])
+
+            values = []
+            for p in traj:
+                for d in offsets:
+                    check_point = p + d
+                    v = self.bilinear_uncertainty(check_point, self.value_grid)
+                    values.append(v)
+
+            values = np.array(values)
 
             if self.find_the_goal:
-                # v 必须都 > 0，即 values - epsilon >= 0
-                return values - t_o
+                return values - t_o  # 所有点的值都必须 ≥ t_o
             else:
-                # v 必须都 < 0，即 -(values + epsilon) >= 0
-                return -(values - 0.1)
+                return -(values - 0.1)  # 所有点的值都必须 < 0.1
+
 
         nonlinear_constraint = NonlinearConstraint(constraint_fn, 0, np.inf)
 

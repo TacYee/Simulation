@@ -179,7 +179,7 @@ class DroneFSM:
             self.data_records['state_lasers2'], 
             self.data_records['laser_values1'], 
             self.data_records['laser_values2'], 
-            curvature_threshold=-0.7,
+            curvature_threshold=-1,
             exit_point = self.state_vars['exit_point']
         )
         gpis.sample_data()
@@ -451,7 +451,7 @@ class DroneFSM:
             self.data_records['state_lasers2'], 
             self.data_records['laser_values1'], 
             self.data_records['laser_values2'], 
-            curvature_threshold=-0.7,
+            curvature_threshold=-1,
             exit_point = self.state_vars['exit_point']
         )
         gpis.sample_data()
