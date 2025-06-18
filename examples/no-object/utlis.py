@@ -96,6 +96,14 @@ def control_drone(drone, drone_state, depth1_noisy, depth2_noisy, vel_forward, v
         target_yaw = current_yaw + yaw_right
         perform_attitude_control(drone, drone_state, controller, target_yaw, "turn right")
         counter -= 1
+    elif depth1_noisy < MIN_THRESHOLD and depth2_noisy > MAX_THRESHOLD:
+        target_yaw = current_yaw + yaw_left
+        perform_attitude_control(drone, drone_state, controller, target_yaw, "turn left")
+        counter -= 1
+    elif depth1_noisy > MAX_THRESHOLD and depth2_noisy < MIN_THRESHOLD:
+        target_yaw = current_yaw + yaw_right
+        perform_attitude_control(drone, drone_state, controller, target_yaw, "turn right")
+        counter -= 1
     elif depth1_noisy > MAX_THRESHOLD and depth2_noisy > MAX_THRESHOLD:
         forward_world = transform_velocity(vel_forward, R_transpose)
         apply_control(drone, drone_state, controller, forward_world, "fly forward")

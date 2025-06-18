@@ -93,8 +93,8 @@ class DroneFSM:
         # 常量
         self.MIN_THRESHOLD = 0.4
         self.MAX_THRESHOLD = 0.45
-        self.ROOM_X_MIN, self.ROOM_X_MAX = -4, 4
-        self.ROOM_Y_MIN, self.ROOM_Y_MAX = -4, 4
+        self.ROOM_X_MIN, self.ROOM_X_MAX = -4.5, 4.5
+        self.ROOM_Y_MIN, self.ROOM_Y_MAX = -4.5, 4.5
         
         # 速度向量
         self.vel_forward = torch.tensor([0.2, 0.0, 0.0], device=sim.device)
@@ -167,7 +167,12 @@ class DroneFSM:
     
     def handle_boundary_violation(self, drone_state):
         """处理边界违规"""
-        
+        if len(self.data_records_temp['state_xs']) > 0:
+            for key in self.data_records:
+                if key in ['laser_values1', 'laser_values2']:
+                    self.data_records[key].extend([2] * len(self.data_records_temp[key]))
+                else:
+                    self.data_records[key].extend(self.data_records_temp[key])
         self.data_records_temp = {k: [] for k in self.data_records_temp}
         print(f"🚨 无人机超出房间范围 (x={self.state_vars['state_x']}, y={self.state_vars['state_y']})，检查地图不确定性是否符合要求！")
         self.state_vars['outside'] = True
@@ -179,7 +184,7 @@ class DroneFSM:
             self.data_records['state_lasers2'], 
             self.data_records['laser_values1'], 
             self.data_records['laser_values2'], 
-            curvature_threshold=-1,
+            curvature_threshold=-0.8,
             exit_point = self.state_vars['exit_point']
         )
         gpis.sample_data()
@@ -451,7 +456,7 @@ class DroneFSM:
             self.data_records['state_lasers2'], 
             self.data_records['laser_values1'], 
             self.data_records['laser_values2'], 
-            curvature_threshold=-1,
+            curvature_threshold=-0.8,
             exit_point = self.state_vars['exit_point']
         )
         gpis.sample_data()
@@ -733,13 +738,19 @@ def main(cfg):
         
         # 检查是否退出CF_ACTION
         if drone_fsm.current_state == DroneState.LAND:
-            drone_fsm.save_data('T-315-ours_success_sha.csv')
+            if len(drone_fsm.data_records_temp['state_xs']) > 0:
+                for key in drone_fsm.data_records:
+                    drone_fsm.data_records[key].extend(drone_fsm.data_records_temp[key])
+            drone_fsm.save_data('T-315-ours_success_env3.csv')
             print("find the goal and land, mission complete")
             break
     
     # 保存数据
-    if drone_fsm.current_state != DroneState.EXIT:
-        drone_fsm.save_data('T-315-ours_fail_sha.csv')
+    if drone_fsm.current_state != DroneState.EXIT or DroneState.LAND:
+        if len(drone_fsm.data_records_temp['state_xs']) > 0:
+            for key in drone_fsm.data_records:
+                drone_fsm.data_records[key].extend(drone_fsm.data_records_temp[key])       
+        drone_fsm.save_data('T-315-ours_fail_env3.csv')
 
     simulation_app.close()
 
