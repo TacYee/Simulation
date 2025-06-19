@@ -624,7 +624,7 @@ def main(cfg):
     )
 
     scene_utils.design_scene()
-    scene_utils.create_wall4(315)
+    scene_utils.create_wall4(225)
     
     n = 1  # 设置无人机数量为1
     drone_cls = MultirotorBase.REGISTRY[cfg.drone_model]
@@ -741,7 +741,7 @@ def main(cfg):
             if len(drone_fsm.data_records_temp['state_xs']) > 0:
                 for key in drone_fsm.data_records:
                     drone_fsm.data_records[key].extend(drone_fsm.data_records_temp[key])
-            drone_fsm.save_data('T-315-ours_success_env3.csv')
+            drone_fsm.save_data('T-225-ours_success_env3.csv')
             print("find the goal and land, mission complete")
             break
     
@@ -750,7 +750,7 @@ def main(cfg):
         if len(drone_fsm.data_records_temp['state_xs']) > 0:
             for key in drone_fsm.data_records:
                 drone_fsm.data_records[key].extend(drone_fsm.data_records_temp[key])       
-        drone_fsm.save_data('T-315-ours_fail_env3.csv')
+        drone_fsm.save_data('T-225-ours_fail_env3.csv')
 
     simulation_app.close()
 
